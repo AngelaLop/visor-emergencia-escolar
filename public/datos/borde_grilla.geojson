@@ -1,0 +1,1 @@
+{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"nota":"Hasta aqui llega la grilla del ShakeMap del USGS. En este borde el MMI todavia vale 4,8: la sacudida sigue mas alla, el dato no."},"geometry":{"type":"LineString","coordinates":[[-79.3,1.7666],[-73.1267,1.7666],[-73.1267,7.9],[-79.3,7.9],[-79.3,1.7666]]}}]}

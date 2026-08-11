@@ -1,0 +1,138 @@
+@import "tailwindcss";
+
+/* Los colores no se eligieron a ojo. Las dos categorias de sede (nunca
+   encuestada, encuestada) son la pareja categorica 2 y 1 de la paleta de
+   referencia, y la rampa de intensidad es la secuencial azul en pasos 250 a
+   650. Ambas pasaron el validador de la paleta en modo claro: separacion para
+   daltonismo 24,7 y contraste sobre la superficie por encima de 3:1. Las bandas
+   de MMI van en gris a proposito: son contexto, no una serie, y ademas el MMI
+   es sacudida estimada, no dano. Pintarlas de rojo prometeria lo que este visor
+   no puede sostener. */
+:root {
+  color-scheme: light;
+  --superficie: #fcfcfb;
+  --plano: #f9f9f7;
+  --tinta: #0b0b0b;
+  --tinta-2: #52514e;
+  --tinta-3: #898781;
+  --linea: #e1e0d9;
+  --borde: rgba(11, 11, 11, 0.1);
+
+  --sede-ignota: #eb6834;
+  --sede-encuestada: #2a78d6;
+  --critico: #d03b3b;
+  /* El color del control activo, como el verde de EduAccess. */
+  --acento: #1c5cab;
+  --sede-base: #33414d;
+
+  /* Las bandas de intensidad tal como se ven ya compuestas sobre el mapa base,
+     para que el cuadrito de la leyenda sea del mismo color que la mancha del
+     mapa y no de una version palida que obligue a adivinar. */
+  --banda-1: #e8e7e3;
+  --banda-2: #cfcec8;
+  --banda-3: #a9a7a1;
+  --banda-linea: #6f6d66;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --superficie: #1a1a19;
+    --plano: #0d0d0d;
+    --tinta: #ffffff;
+    --tinta-2: #c3c2b7;
+    --tinta-3: #898781;
+    --linea: #2c2c2a;
+    --borde: rgba(255, 255, 255, 0.1);
+
+    --sede-ignota: #d95926;
+    --sede-encuestada: #3987e5;
+    --acento: #86b6ef;
+  --sede-base: #d7dee4;
+    --sede-base: #d7dee4;
+
+    --banda-1: #2b2a28;
+    --banda-2: #3a3a36;
+    --banda-3: #55544e;
+    --banda-linea: #a8a69c;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --superficie: #1a1a19;
+  --plano: #0d0d0d;
+  --tinta: #ffffff;
+  --tinta-2: #c3c2b7;
+  --tinta-3: #898781;
+  --linea: #2c2c2a;
+  --borde: rgba(255, 255, 255, 0.1);
+
+  --sede-ignota: #d95926;
+  --sede-encuestada: #3987e5;
+  --acento: #86b6ef;
+  --sede-base: #d7dee4;
+
+  --banda-1: #2b2a28;
+  --banda-2: #3a3a36;
+  --banda-3: #55544e;
+  --banda-linea: #a8a69c;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--plano);
+  color: var(--tinta);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* MapLibre trae su propia hoja de estilos con tipografia y colores fijos. */
+.maplibregl-popup-content {
+  background: var(--superficie);
+  color: var(--tinta);
+  border: 1px solid var(--borde);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.maplibregl-popup-tip {
+  border-top-color: var(--superficie) !important;
+  border-bottom-color: var(--superficie) !important;
+}
+
+.maplibregl-ctrl-attrib {
+  font-size: 10px;
+}
+
+/* En el teléfono los controles del mapa quedan detrás de la hoja de tarjetas.
+   El zoom se resuelve con los dedos, así que se esconden el zoom y la escala y
+   se deja solo el botón de inicio, arriba a la derecha bajo la barra de cifras,
+   donde el pulgar lo alcanza y nada lo tapa. */
+@media (max-width: 767px) {
+  .maplibregl-ctrl-bottom-right .maplibregl-ctrl-group:not(.ctrl-inicio),
+  .maplibregl-ctrl-scale {
+    display: none;
+  }
+
+  .maplibregl-ctrl-bottom-right .ctrl-inicio {
+    position: fixed;
+    right: 8px;
+    top: 104px;
+  }
+
+  .maplibregl-ctrl-attrib {
+    font-size: 9px;
+  }
+}

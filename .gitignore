@@ -1,0 +1,14 @@
+# Dependencias y compilados
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+
+# Las huellas de edificio son 2.995 archivos y 58 MB, y las reconstruye el
+# script 23 del repositorio de analisis. No tienen por que viajar aqui.
+public/datos/huellas/
+
+# Sistema
+.DS_Store
+Thumbs.db
+.vercel
