@@ -21,6 +21,7 @@ import {
   CALIDAD_COORD,
   NOMBRE_AREA,
   NOMBRE_QUINTIL,
+  CORTE_ESTRUCTURAL,
   SIGNIFICADO_MMI,
   alumnos,
   miles,
@@ -127,13 +128,41 @@ export default function FichaSede({ sede, reportes, onCerrar }: Props) {
       <Seccion titulo="Estado declarado antes del sismo">
         {sede.encuestada ? (
           <>
-            <Dato k="techos" v={sede.techos} />
-            <Dato k="muros" v={sede.muros} />
-            <Dato k="pisos" v={sede.pisos} />
+            {sede.ivid != null && (
+              <div className="mb-2">
+                <div className="flex items-baseline gap-2">
+                  {/* El numero se colorea por el peor de los tres elementos y
+                      no por su propio valor. Una sede con el piso hundido y lo
+                      demas sano promedia 0,83, y pintada por ese 0,83 se veria
+                      sana. La linea de abajo dice donde esta el compromiso. */}
+                  <span
+                    className="num text-2xl font-semibold leading-none"
+                    style={{ color: tonoIvid(peorElemento(sede)) }}
+                  >
+                    {sede.ivid.toFixed(2).replace(".", ",")}
+                  </span>
+                  <span className="text-xs" style={{ color: "var(--tinta-2)" }}>
+                    índice de vulnerabilidad, de 0 a 5
+                  </span>
+                </div>
+                {comprometidos(sede).length > 0 && (
+                  <div
+                    className="mt-1 text-xs font-medium"
+                    style={{ color: TONO.estructural }}
+                  >
+                    Compromiso estructural en {lista(comprometidos(sede))}.
+                  </div>
+                )}
+              </div>
+            )}
+            <Dato k="techos" v={sede.techos} p={sede.ivid_techos} />
+            <Dato k="muros" v={sede.muros} p={sede.ivid_muros} />
+            <Dato k="pisos" v={sede.pisos} p={sede.ivid_pisos} />
             <Dato k="fecha de la encuesta" v={sede.fecha_encuesta} />
             <p className="mt-1 text-xs" style={{ color: "var(--tinta-3)" }}>
               Lo declaró el rector en la encuesta del FFIE. Es una declaración,
-              no una inspección técnica.
+              no una inspección técnica. El puntaje de cada elemento va de 0 a 5;
+              desde 2,5 hay algo estructural comprometido.
             </p>
           </>
         ) : (
@@ -246,15 +275,75 @@ function Seccion({
   );
 }
 
-function Dato({ k, v }: { k: string; v?: string | null }) {
+function Dato({
+  k,
+  v,
+  p,
+}: {
+  k: string;
+  v?: string | null;
+  /** Puntaje del elemento, si lo tiene. Va coloreado por su propia gravedad,
+   *  que a nivel de elemento es un corte exacto y no una aproximacion. */
+  p?: number | null;
+}) {
   return (
     <div className="flex gap-2 py-0.5 text-xs">
       <span className="w-36 shrink-0" style={{ color: "var(--tinta-3)" }}>
         {k}
+        {p != null && (
+          <span
+            className="num ml-1.5 font-semibold"
+            style={{ color: tonoIvid(p) }}
+          >
+            {p.toFixed(1).replace(".", ",")}
+          </span>
+        )}
       </span>
       <span style={{ color: v ? "var(--tinta)" : "var(--tinta-3)" }}>
         {v || "sin dato"}
       </span>
     </div>
   );
+}
+
+/** Los tres tonos de gravedad de un elemento.
+ *
+ * Familia del violeta de carencia, que en este mapa ya significa "algo le falta
+ * a esta escuela". Nunca de la rampa verde a rojo, que es la sacudida del
+ * sismo: un tono no puede significar dos cosas en la misma pantalla.
+ */
+const TONO = {
+  bien: "var(--tinta-3)",
+  deterioro: "var(--vuln-deterioro)",
+  estructural: "var(--vuln-estructural)",
+};
+
+/** El corte de 2,5 es exacto por elemento: sin nada estructural marcado un
+ *  elemento no pasa de 2, y con algo estructural el minimo es 2,5. */
+function tonoIvid(p: number | null | undefined): string {
+  if (p == null) return "var(--tinta-3)";
+  if (p === 0) return TONO.bien;
+  return p >= CORTE_ESTRUCTURAL ? TONO.estructural : TONO.deterioro;
+}
+
+function peorElemento(s: Sede): number {
+  return Math.max(s.ivid_techos ?? 0, s.ivid_muros ?? 0, s.ivid_pisos ?? 0);
+}
+
+/** Que elementos tienen compromiso estructural, por nombre. */
+function comprometidos(s: Sede): string[] {
+  return (
+    [
+      ["techos", s.ivid_techos],
+      ["muros", s.ivid_muros],
+      ["pisos", s.ivid_pisos],
+    ] as [string, number | null | undefined][]
+  )
+    .filter(([, v]) => v != null && v >= CORTE_ESTRUCTURAL)
+    .map(([k]) => k);
+}
+
+function lista(xs: string[]): string {
+  if (xs.length <= 1) return xs[0] ?? "";
+  return `${xs.slice(0, -1).join(", ")} y ${xs[xs.length - 1]}`;
 }

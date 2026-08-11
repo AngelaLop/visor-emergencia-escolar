@@ -43,15 +43,15 @@ se contesta la pregunta operativa:
 1. **El evento.** Qué pasó y dónde, con el pin del epicentro. El botón de
    información explica por qué bajo el epicentro la intensidad es 6,0 y el
    máximo del mapa, 6,9, cae 44 km al sureste.
-2. **Daños Reportados en Instituciones Educativas (IE).** Lo que llegó de la
+2. **Daños Reportados en Sedes Educativas (SE).** Lo que llegó de la
    ciudadanía por ChatMap y ya pasó por curaduría.
 3. **Capas.** Intensidad con sus seis bandas, sedes educativas con sus filtros
    colgando (secretaría, y dentro de "más filtros" el área, la matrícula mínima
    y el quintil de riqueza) y huellas de edificio.
-4. **Características de las IE antes del sismo.** La encuesta del FFIE de 2021 y
+4. **Características de las SE antes del sismo.** La encuesta del FFIE de 2021 y
    2022 y el registro C-600 de 2024.
 
-A la derecha, arriba: cuántas instituciones y cuántos estudiantes hay en la
+A la derecha, arriba: cuántas sedes educativas y cuántos estudiantes hay en la
 selección, la descarga en CSV y el selector de mapa base (claro, oscuro, calles,
 OpenStreetMap). El tema de la interfaz sigue al mapa base. Abajo a la derecha, el
 zoom y un botón de inicio que devuelve la vista al encuadre original.
@@ -122,6 +122,51 @@ Lo que el C-600 no puede arreglar es el marco al revés: hay 1.617 sedes oficial
 en el C-600 de 2024 que no existen en el SIMAT de 2022, y 891 de ellas rinden
 normalmente. Eso exige un SIMAT más reciente y está levantado en
 `docs/10_issue_cobertura_area_class.md`.
+
+## El índice de vulnerabilidad declarada
+
+Lo construye `scripts/25_indice_vulnerabilidad.py` y va de 0 a 5. Es el promedio
+simple de tres elementos que pesan igual: techos, muros y pisos.
+
+La encuesta del FFIE no preguntó gravedad, preguntó qué problemas hay, con
+casillas que se marcan a la vez. Cada elemento ofrece condiciones de deterioro
+(agrietado, humedad, material en mal estado) y estructurales (derruido,
+incompleto, inclinado, hundido). Un elemento vale 0 si el rector lo declaró en
+buen estado, y si no, `1 + 1 × (deterioro marcado / disponible) + 3 ×
+(estructural marcado / disponible)`.
+
+Se divide por lo disponible en cada elemento porque techos y muros ofrecen dos
+casillas de deterioro y una estructural, y pisos al revés. Esa asimetría es del
+formulario, no de las escuelas.
+
+Los pesos 1 y 3 sostienen una propiedad que el script comprueba en cada corrida:
+**por elemento**, el máximo sin daño estructural es 2 y el mínimo con daño
+estructural es 2,5, así que un puntaje de elemento de 2,5 o más significa
+siempre que hay algo estructural comprometido.
+
+El índice de la sede, en cambio, mide cuánto daño se declaró en total y no de
+qué tipo. Dos sedes con el mismo puntaje pueden haber llegado ahí por caminos
+distintos: una con el piso hundido y lo demás sano, otra con los tres elementos
+deteriorados sin nada estructural. Las dos son daño y por eso puntúan parecido.
+Cuál de las dos es se ve en la ficha de la sede, que trae los tres elementos por
+separado y nombra el que tenga compromiso estructural.
+
+El filtro del mapa corta en tramos de una unidad sobre el propio índice, que es
+lo que lo hace legible sin explicación: 0 a 0,99, 1 a 1,99, y así hasta 4 a 5.
+En el país, esos tramos reparten las 15.150 sedes en 21,9 %, 31,8 %, 23,7 %,
+11,6 % y 11,1 %.
+
+Distribución de las 15.150 sedes con índice: 10,3 % en 0, 25,5 % hasta 1,5,
+30,6 % hasta 2,5, 17,6 % hasta 3,5, 8,4 % hasta 4,5 y 7,5 % por encima. Media
+1,99 y mediana 1,83.
+
+La ficha técnica completa está en la pantalla, detrás del botón de información
+de esa sección, y su texto vive en `FICHA_IVID` (`lib/datos.ts`). Si el script 25
+cambia, ese texto cambia con él.
+
+No es una inspección. Es una declaración administrativa puesta en orden, hecha
+por el rector sobre su propia sede, sin foto y frente a un fondo de
+infraestructura, y anterior al sismo.
 
 ## Reportes ciudadanos
 

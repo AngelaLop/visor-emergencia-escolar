@@ -98,6 +98,13 @@ export function pasa(s: Sede, f: Filtros): boolean {
   if (f.pties.length && !f.pties.includes(s.ptie_estado ?? "no_ptie")) {
     return false;
   }
+  // Sin encuesta no hay indice, y una sede sin indice no pertenece a ninguna
+  // categoria de vulnerabilidad: queda fuera en cuanto se elige alguna. Es la
+  // misma regla del filtro de quintil de riqueza.
+  if (f.ividCategorias.length) {
+    const cat = categoriaIvid(s);
+    if (cat == null || !f.ividCategorias.includes(cat)) return false;
+  }
 
   if (f.tab === "fisica") {
     if (f.fisica === "encuestadas" && !s.encuestada) return false;
@@ -142,6 +149,90 @@ export function alumnos(s: Sede): number {
   return s.matricula_2024 ?? s.matricula ?? 0;
 }
 
+/** Ficha tecnica del IVID, tal como se lee detras del boton de informacion.
+ *
+ * Vive aqui y no incrustada en el componente porque describe una construccion
+ * metodologica, no una decision de presentacion. Si el script 25 cambia, este
+ * texto cambia con el.
+ */
+export const FICHA_IVID =
+  "Qué mide. Cuánto daño declaró el rector en 2021 y 2022, sobre tres " +
+  "elementos: techos, muros y pisos. Va de 0 a 5 y es el promedio simple de " +
+  "los tres, que pesan igual.\n\n" +
+  "De dónde sale. La encuesta del FFIE no preguntó gravedad. Preguntó qué " +
+  "problemas hay, con casillas que se pueden marcar a la vez. Cada elemento " +
+  "ofrece dos tipos de condición: deterioro (agrietado, humedad, material en " +
+  "mal estado) y estructural (derruido, incompleto, inclinado, hundido). Los " +
+  "hundimientos del piso cuentan como estructural porque hablan del suelo y de " +
+  "la cimentación, no de un acabado gastado.\n\n" +
+  "Cómo se calcula. Si el rector marcó que está en buen estado, el elemento " +
+  "vale 0. Si no, vale 1 más un punto por la proporción de casillas de " +
+  "deterioro que marcó, más tres puntos por la proporción de casillas " +
+  "estructurales. Se divide por lo que cada elemento ofrece porque techos y " +
+  "muros tienen dos casillas de deterioro y una estructural, y pisos al revés: " +
+  "esa asimetría es del formulario, no de las escuelas.\n\n" +
+  "Cómo se lee. El índice mide cuánto daño declaró el rector en total, no de " +
+  "qué tipo. Dos sedes con el mismo puntaje pueden haber llegado ahí por " +
+  "caminos distintos: una con algo estructural comprometido en un solo " +
+  "elemento, otra con los tres deteriorados sin nada estructural. Las dos son " +
+  "daño y por eso puntúan parecido; el índice no elige entre ellas. Cuál de " +
+  "las dos es se ve abriendo la sede, donde van los tres elementos por " +
+  "separado y se nombra el que tenga compromiso estructural.\n\n" +
+  "Por elemento sí hay un corte exacto: 0 es buen estado, hasta 2 es " +
+  "deterioro, y 2,5 o más significa siempre que hay algo estructural " +
+  "comprometido.\n\n" +
+  "Qué no es. No es una inspección ni una calificación de lo que se ve. Es una " +
+  "declaración administrativa puesta en orden, hecha por el rector sobre su " +
+  "propia sede, sin foto y frente a un fondo de infraestructura. Es anterior " +
+  "al sismo: describe el punto de partida, no el daño de hoy.\n\n" +
+  "Cobertura. Existe solo para las 15.150 sedes que el FFIE visitó. Las demás " +
+  "quedan sin índice y no en cero: no haber sido visitada es no saber. Cuando " +
+  "el rector marcó \"Otro\" sin ninguna casilla de severidad, el elemento suma " +
+  "el 1 de base y queda contado aparte; su gravedad no se imputa.";
+
+/** Un puntaje de elemento de 2,5 o mas significa compromiso estructural.
+ *
+ * El corte es exacto y no una convencion. Sin nada estructural marcado, un
+ * elemento no pasa de 2. Con algo estructural, el minimo es 2,5 en pisos, que
+ * ofrece dos casillas estructurales, y 4 en techos y muros, que ofrecen una.
+ * Entre 2 y 2,5 no cae ningun elemento.
+ */
+export const CORTE_ESTRUCTURAL = 2.5;
+
+/** Cuantos de los tres elementos tienen compromiso estructural.
+ *
+ * Es lo que ordena el filtro del mapa, en vez de tramos del promedio. El
+ * promedio diluye: 872 sedes tienen algo estructural comprometido y aun asi
+ * promedian menos de 2,0, o sea que por promedio caerian en "deterioro".
+ */
+export function estructurales(s: Sede): number {
+  return [s.ivid_techos, s.ivid_muros, s.ivid_pisos].filter(
+    (v) => v != null && v >= CORTE_ESTRUCTURAL,
+  ).length;
+}
+
+/** El tramo del indice al que cae una sede, o null si nunca fue visitada.
+ *
+ * Son tramos de una unidad sobre el propio indice, no categorias de otra cosa.
+ * El indice mide cuanto dano declaro el rector en total, y dos sedes con el
+ * mismo valor pueden haber llegado ahi por caminos distintos: una con algo
+ * estructural comprometido, otra con los tres elementos deteriorados. Las dos
+ * formas son daño y por eso puntuan parecido. Cual de las dos es, lo dice la
+ * ficha de la sede, que muestra los tres elementos por separado.
+ */
+export function categoriaIvid(s: Sede): number | null {
+  if (s.ivid == null) return null;
+  return s.ivid >= 4 ? 4 : Math.floor(s.ivid);
+}
+
+export const NOMBRE_IVID: Record<number, string> = {
+  0: "0 a 0,99",
+  1: "1 a 1,99",
+  2: "2 a 2,99",
+  3: "3 a 3,99",
+  4: "4 a 5",
+};
+
 export type Resumen = {
   sedes: number;
   matricula: number;
@@ -151,12 +242,17 @@ export type Resumen = {
   /** Sedes que el C-600 de 2024 declara liquidadas, fusionadas, duplicadas o
    *  inactivas. */
   noOperan: number;
+  /** Cuantas sedes de la seleccion tienen IVID. Solo las visitadas por el FFIE
+   *  lo tienen, asi que el promedio se calcula sobre este denominador y no
+   *  sobre el total seleccionado. */
+  ividN: number;
+  /** Promedio del IVID sobre `ividN`. Cero cuando no hay ninguna con indice, y
+   *  por eso la pantalla se guia por `ividN` antes de mostrarlo. */
+  ividMedia: number;
+  /** Cuantas sedes hay en cada categoria de `categoriaIvid`, del 0 al 4. Lo usa
+   *  la lista de chips para decir cuantas recorta cada uno. */
+  ividPorCategoria: number[];
   encuestadas: number;
-  nuncaEncuestadas: number;
-  matriculaIgnota: number;
-  techosDanados: number;
-  murosDanados: number;
-  pisosDanados: number;
   sinEnergia: number;
   matriculaSinEnergia: number;
   sinInternet: number;
@@ -174,12 +270,10 @@ export function resume(rasgos: RasgoSede[]): Resumen {
     matricula: 0,
     matriculaDe2022: 0,
     noOperan: 0,
+    ividN: 0,
+    ividMedia: 0,
+    ividPorCategoria: [0, 0, 0, 0, 0],
     encuestadas: 0,
-    nuncaEncuestadas: 0,
-    matriculaIgnota: 0,
-    techosDanados: 0,
-    murosDanados: 0,
-    pisosDanados: 0,
     sinEnergia: 0,
     matriculaSinEnergia: 0,
     sinInternet: 0,
@@ -194,19 +288,17 @@ export function resume(rasgos: RasgoSede[]): Resumen {
     r.matricula += m;
     if (s.matricula_2024 == null) r.matriculaDe2022 += 1;
     if (s.vigencia_2024 === "no_opera") r.noOperan += 1;
+    const cat = categoriaIvid(s);
+    if (cat != null) {
+      r.ividN += 1;
+      // Se acumula la suma y al final se divide. Promediar promedios daria
+      // otro numero.
+      r.ividMedia += s.ivid ?? 0;
+      r.ividPorCategoria[cat] += 1;
+    }
     mpios.add(`${s.depto}|${s.mpio}`);
     if (s.secretaria) etc.add(s.secretaria);
-    if (s.encuestada) {
-      r.encuestadas += 1;
-      // Las tres columnas son 1 cuando el rector declaro al menos una
-      // condicion de dano en ese elemento, y 0 cuando declaro que esta bien.
-      if (s.techos_danado) r.techosDanados += 1;
-      if (s.muros_danado) r.murosDanados += 1;
-      if (s.pisos_danado) r.pisosDanados += 1;
-    } else {
-      r.nuncaEncuestadas += 1;
-      r.matriculaIgnota += m;
-    }
+    if (s.encuestada) r.encuestadas += 1;
     // Se cuenta el `false` explicito, no el ausente: sin reporte del C-600 no
     // se sabe, y contar la ignorancia como carencia infla la cifra.
     if (s.energia_2024 === false) {
@@ -221,6 +313,7 @@ export function resume(rasgos: RasgoSede[]): Resumen {
   }
   r.municipios = mpios.size;
   r.secretarias = etc.size;
+  r.ividMedia = r.ividN ? r.ividMedia / r.ividN : 0;
   return r;
 }
 
@@ -272,7 +365,7 @@ export const NOMBRE_AREA: Record<string, string> = {
 /** Estado de la sede frente al PTIES.
  *
  * "Focalizada" y "intervenida" no son lo mismo y por eso van separadas: el ano
- * de intervencion del archivo llega hasta 2029, asi que hay instituciones en la
+ * de intervencion del archivo llega hasta 2029, asi que hay sedes en la
  * lista cuya obra todavia no empieza.
  */
 export const NOMBRE_PTIE: Record<string, string> = {

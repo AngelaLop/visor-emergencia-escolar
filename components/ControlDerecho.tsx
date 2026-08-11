@@ -50,14 +50,14 @@ export default function ControlDerecho({
               className="text-[11px] leading-tight md:hidden"
               style={{ color: "var(--tinta-2)" }}
             >
-              instituciones
+              sedes educativas
             </span>
           </div>
           <div
             className="hidden text-xs md:block"
             style={{ color: "var(--tinta-2)" }}
           >
-            instituciones seleccionadas
+            sedes educativas seleccionadas
           </div>
 
           <div className="flex items-center gap-2 md:mt-2 md:block">

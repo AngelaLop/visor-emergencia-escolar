@@ -28,6 +28,12 @@
      usa solo para marcar lo que explica la plataforma entera, no un dato del
      mapa, asi que no compite con ninguna categoria. */
   --cima: #60bfb9;
+  /* Gravedad de un elemento en el indice de vulnerabilidad. Familia del violeta
+     de carencia, que en este mapa ya significa que algo le falta a la escuela.
+     Nunca de la rampa verde a rojo, que es la sacudida del sismo: un tono no
+     puede significar dos cosas en la misma pantalla. */
+  --vuln-deterioro: #6f5fc4;
+  --vuln-estructural: #4a3aa7;
   --sede-base: #33414d;
 
   /* Las bandas de intensidad tal como se ven ya compuestas sobre el mapa base,
@@ -53,6 +59,8 @@
     --sede-ignota: #d95926;
     --sede-encuestada: #3987e5;
     --acento: #86b6ef;
+    --vuln-deterioro: #a99dea;
+    --vuln-estructural: #9085e9;
   --sede-base: #d7dee4;
     --sede-base: #d7dee4;
 
@@ -76,6 +84,8 @@
   --sede-ignota: #d95926;
   --sede-encuestada: #3987e5;
   --acento: #86b6ef;
+  --vuln-deterioro: #a99dea;
+  --vuln-estructural: #9085e9;
   --sede-base: #d7dee4;
 
   --banda-1: #2b2a28;

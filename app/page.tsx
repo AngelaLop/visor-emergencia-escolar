@@ -130,6 +130,12 @@ export default function Pagina() {
               fisica: "todas",
               energia: "todas",
               internet: "todas",
+              // El filtro por nivel de vulnerabilidad también es de esa
+              // tarjeta. Sin neutralizarlo, el promedio del índice se
+              // calcularía sobre los niveles que se acaban de marcar y
+              // devolvería el nivel elegido, y los conteos de cada fila dirían
+              // cero en las filas apagadas.
+              ividCategorias: [],
             }),
           )
         : resume([]),

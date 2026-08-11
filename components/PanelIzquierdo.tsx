@@ -20,7 +20,9 @@ import { MarcaGitHub } from "@/components/Iconos";
 import { COLOR_BANDA, REPORTE, svgEpicentro } from "@/components/Mapa";
 import type { Capas } from "@/components/Mapa";
 import {
+  FICHA_IVID,
   NOMBRE_AREA,
+  NOMBRE_IVID,
   NOMBRE_PTIE,
   NOMBRE_QUINTIL,
   NOMBRE_VIGENCIA,
@@ -111,6 +113,22 @@ export default function PanelIzquierdo(p: Props) {
     </div>
   );
 }
+
+/** La rampa de los cinco tramos del indice, de menos a mas dano declarado.
+ *
+ * Ahora si es una gradacion, porque los tramos son del propio indice y estan
+ * ordenados. Una sola familia de tono, la del violeta de carencia, que en este
+ * mapa ya significa que algo le falta a la escuela. Nunca la rampa de verde a
+ * rojo, que es la sacudida del sismo: un tono no puede significar dos cosas en
+ * la misma pantalla.
+ */
+const TONO_IVID: Record<number, string> = {
+  0: "#cfc9ee",
+  1: "#ada2e2",
+  2: "#8a7bd5",
+  3: "#6754c0",
+  4: "#3d2c94",
+};
 
 // ------------------------------------------------------------- 1. evento --
 
@@ -220,7 +238,7 @@ function TarjetaDanos({ capas, onCapas, reportes, onIrASede }: Props) {
             className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
             style={{ background: REPORTE }}
           />
-          <span>Daños Reportados en Instituciones Educativas (IE)</span>
+          <span>Daños Reportados en Sedes Educativas (SE)</span>
           <span className="num text-xs" style={{ color: "var(--tinta-3)" }}>
             ({miles(confirmados.length)})
           </span>
@@ -263,7 +281,7 @@ function TarjetaDanos({ capas, onCapas, reportes, onIrASede }: Props) {
             className="mb-3 flex items-center justify-center gap-2 rounded border px-3 py-2 text-xs font-medium"
             style={{ borderColor: "var(--cima)", color: "var(--cima)" }}
           >
-            Reportar daños en IE
+            Reportar daños en SE
             <span aria-hidden="true">↗</span>
           </a>
 
@@ -487,7 +505,7 @@ function TarjetaCapas({
                 style={{ color: "var(--tinta-3)" }}
               >
                 El mapa pinta qué tan fuerte se sintió el sismo en cada zona y
-                muestra las instituciones educativas que quedaron dentro.
+                muestra las sedes educativas que quedaron dentro.
                 Encender una banda decide las dos cosas a la vez: la mancha del
                 mapa y las sedes que se cuentan. La línea punteada marca hasta
                 dónde llega la grilla del USGS, no hasta dónde llegó el temblor.
@@ -568,7 +586,7 @@ function TarjetaCapas({
                 <Etiqueta oracion>
                   <span className="text-[11px]">Programa PTIES</span>
                   <Info
-                    texto="El PTIES focaliza 72 instituciones educativas de media en todo el país, de las cuales 35 caen en esta zona. El archivo trae el año de intervención y llega hasta 2029, así que estar focalizada no es estar ya intervenida: son 10 intervenidas y 24 programadas dentro de la selección. La marca va sobre el código que el archivo lista y no se extiende a las demás sedes de la misma institución."
+                    texto="El PTIES focaliza 72 establecimientos de educación media en todo el país. Su listado da un código de sede por cada uno, y 35 de esas sedes caen en esta zona. El archivo trae el año de intervención y llega hasta 2029, así que estar focalizada no es estar ya intervenida: son 10 intervenidas y 24 programadas dentro de la selección. La marca va sobre el código que el archivo lista y no se extiende a las demás sedes del mismo establecimiento."
                   />
                 </Etiqueta>
                 <div className="mb-3">
@@ -676,12 +694,9 @@ function TarjetaCaracteristicas({
 }: Props) {
   const [abierta, setAbierta] = useState(false);
   const set = (p: Partial<Filtros>) => onFiltros({ ...filtros, ...p });
-  const pct = (n: number, de: number) => (de ? Math.round((n / de) * 100) : 0);
+  const alterna = (l: number[], v: number) =>
+    l.includes(v) ? l.filter((x) => x !== v) : [...l, v];
   const base = resumenAmplio;
-  const recortado =
-    filtros.tab === "fisica"
-      ? filtros.fisica !== "todas"
-      : filtros.energia !== "todas" || filtros.internet !== "todas";
 
   return (
     // El acento de esta tarjeta es el turquesa de CIMA y no el azul del resto.
@@ -690,7 +705,7 @@ function TarjetaCaracteristicas({
     // azul. Una variable heredada cambia todo lo de dentro y nada de fuera.
     <Tarjeta estilo={{ "--acento": "var(--cima)" } as React.CSSProperties}>
       <Encabezado
-        titulo="Características de las IE antes del sismo"
+        titulo="Características de las SE antes del sismo"
         abierta={abierta}
         onAlternar={() => setAbierta(!abierta)}
       />
@@ -746,19 +761,7 @@ function TarjetaCaracteristicas({
                     <span className="num font-semibold">
                       {miles(base.encuestadas)}
                     </span>{" "}
-                    fueron visitadas. De esas declararon avería el{" "}
-                    <span className="num">
-                      {pct(base.techosDanados, base.encuestadas)} %
-                    </span>{" "}
-                    en techos, el{" "}
-                    <span className="num">
-                      {pct(base.murosDanados, base.encuestadas)} %
-                    </span>{" "}
-                    en muros y el{" "}
-                    <span className="num">
-                      {pct(base.pisosDanados, base.encuestadas)} %
-                    </span>{" "}
-                    en pisos.
+                    fueron visitadas.
                   </p>
                 ) : (
                   <p className="mb-3 text-xs" style={{ color: "var(--tinta-2)" }}>
@@ -789,12 +792,109 @@ function TarjetaCaracteristicas({
                   </Opcion>
                 </Segmentado>
 
-                <Hallazgo
-                  n={base.nuncaEncuestadas}
-                  de={base.sedes}
-                  matricula={base.matriculaIgnota}
-                  texto="de las sedes seleccionadas nunca fueron visitadas. De estas no hay ninguna declaración previa sobre su estado."
-                />
+                {/* El indice solo aparece sobre las visitadas, porque es el
+                    unico estado donde todas las sedes en juego lo tienen. El
+                    promedio se calcula sobre `base`, la seleccion sin los
+                    botones de esta tarjeta: si se calculara sobre lo filtrado,
+                    marcar un nivel devolveria el nivel que se acaba de elegir. */}
+                {filtros.fisica === "encuestadas" && base.ividN > 0 && (
+                  <div
+                    className="mt-3 rounded px-3 py-2"
+                    style={{ background: "var(--plano)" }}
+                  >
+                    <div className="flex items-baseline gap-2">
+                      <span className="num text-3xl font-semibold leading-none">
+                        {base.ividMedia.toFixed(2).replace(".", ",")}
+                      </span>
+                      <span className="text-xs" style={{ color: "var(--tinta-2)" }}>
+                        índice de vulnerabilidad declarada
+                      </span>
+                      <Info texto={FICHA_IVID} ancho />
+                    </div>
+                    <div className="mt-1 text-xs" style={{ color: "var(--tinta-2)" }}>
+                      De 0 a 5, promedio de{" "}
+                      <span className="num">{miles(base.ividN)}</span>{" "}
+                      {base.ividN === 1 ? "sede visitada" : "sedes visitadas"} en
+                      2021 y 2022.
+                    </div>
+
+                    {/* La misma forma que la lista de bandas de intensidad:
+                        casilla, rotulo y a la derecha el dato que ayuda a
+                        decidir. Alla es que significa esa banda; aca, cuantas
+                        sedes recorta el nivel. */}
+                    <div className="mt-2 flex gap-3 text-[10px]">
+                      <button
+                        onClick={() => set({ ividCategorias: [0, 1, 2, 3, 4] })}
+                        className="underline"
+                        style={{ color: "var(--tinta-3)" }}
+                      >
+                        Seleccionar todos
+                      </button>
+                      <button
+                        onClick={() => set({ ividCategorias: [] })}
+                        className="underline"
+                        style={{ color: "var(--tinta-3)" }}
+                      >
+                        Quitar todos
+                      </button>
+                    </div>
+                    {[0, 1, 2, 3, 4].map((c) => {
+                      const on = filtros.ividCategorias.includes(c);
+                      return (
+                        <button
+                          key={c}
+                          onClick={() =>
+                            set({
+                              ividCategorias: alterna(filtros.ividCategorias, c),
+                            })
+                          }
+                          className="flex w-full items-center gap-2 py-1 text-xs"
+                        >
+                          <span
+                            className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border text-[9px] leading-none"
+                            style={{
+                              borderColor: on ? "var(--tinta)" : "var(--linea)",
+                              background: on ? "var(--tinta)" : "transparent",
+                              color: "var(--superficie)",
+                            }}
+                          >
+                            {on ? "✓" : ""}
+                          </span>
+                          <span
+                            className="inline-block h-3 w-5 shrink-0 rounded-sm"
+                            style={{
+                              background: TONO_IVID[c],
+                              opacity: on ? 1 : 0.35,
+                            }}
+                          />
+                          {/* El rotulo es el tramo del propio indice, como la
+                              lista de intensidad rotula "MMI 6,5" con el valor
+                              de la banda. No hace falta explicar que significa
+                              el numero: es el mismo que muestra la ficha. */}
+                          <span
+                            className="num truncate text-left"
+                            style={{ color: "var(--tinta-2)" }}
+                          >
+                            {NOMBRE_IVID[c]}
+                          </span>
+                          <span
+                            className="num ml-auto text-[10px]"
+                            style={{ color: "var(--tinta-3)" }}
+                          >
+                            {miles(base.ividPorCategoria[c])}
+                          </span>
+                        </button>
+                      );
+                    })}
+                    <p
+                      className="pt-1 text-[10px] leading-relaxed"
+                      style={{ color: "var(--tinta-3)" }}
+                    >
+                      Abriendo una sede se ven los tres componentes del puntaje y
+                      si su daño es deterioro o compromiso estructural.
+                    </p>
+                  </div>
+                )}
               </>
             ) : (
               <>
@@ -879,18 +979,6 @@ function TarjetaCaracteristicas({
               </>
             )}
 
-            {recortado && (
-              <p
-                className="mt-3 rounded px-2.5 py-1.5 text-xs"
-                style={{ background: "var(--plano)", color: "var(--tinta-2)" }}
-              >
-                Con este recorte el mapa muestra{" "}
-                <span className="num font-semibold">{miles(resumen.sedes)}</span>{" "}
-                sedes y{" "}
-                <span className="num font-semibold">{miles(resumen.matricula)}</span>{" "}
-                estudiantes.
-              </p>
-            )}
           </div>
         </>
       )}
@@ -1177,37 +1265,6 @@ function Desplegable({
   );
 }
 
-function Hallazgo({
-  n,
-  de,
-  matricula,
-  texto,
-}: {
-  n: number;
-  de: number;
-  matricula: number;
-  texto: string;
-}) {
-  const pct = de ? Math.round((n / de) * 100) : 0;
-  return (
-    <div
-      className="mt-3 rounded border px-3 py-2"
-      style={{ borderColor: "var(--sede-ignota)" }}
-    >
-      <div className="flex items-baseline gap-2">
-        <span className="num text-xl font-semibold" style={{ color: "var(--sede-ignota)" }}>
-          {miles(n)}
-        </span>
-        <span className="num text-xs" style={{ color: "var(--tinta-2)" }}>
-          {pct} % de la selección
-        </span>
-      </div>
-      <div className="text-xs" style={{ color: "var(--tinta-2)" }}>
-        {texto} Son <span className="num">{miles(matricula)}</span> estudiantes.
-      </div>
-    </div>
-  );
-}
 
 function Mini({ n, matricula, texto }: { n: number; matricula: number; texto: string }) {
   return (
@@ -1243,25 +1300,53 @@ function Info({
   texto,
   fuente,
   tono,
+  ancho,
 }: {
   texto: string;
   fuente?: { texto: string; url: string };
   /** Color del boton. Por defecto es el gris de nota al pie. Solo lo cambia el
    *  boton del titulo, que no explica un dato sino la plataforma entera. */
   tono?: string;
+  /** Caja mas ancha y con parrafos. La usa la ficha tecnica del indice, que no
+   *  es una nota al pie sino la definicion completa de como se construyo. */
+  ancho?: boolean;
 }) {
   // Dos estados y no uno: el clic deja la nota fija y el puntero solo la asoma.
   // Con una sola bandera, mover el mouse encima para hacer clic la abría y el
   // clic la volvía a cerrar en el mismo gesto.
   const [encima, setEncima] = useState(false);
   const [fijado, setFijado] = useState(false);
-  const [caja, setCaja] = useState<{ top: number; left: number } | null>(null);
+  const [caja, setCaja] = useState<
+    { top: number; left: number; alto: number } | null
+  >(null);
   const boton = useRef<HTMLButtonElement>(null);
   const abierto = encima || fijado;
 
+  /** Coloca la nota dentro de la ventana, por los cuatro lados.
+   *
+   * Antes solo se cuidaba el borde derecho y la ficha tecnica, que es larga, se
+   * salia por abajo: la caja se desplaza sola por dentro, pero la parte que
+   * quedaba fuera de la pantalla no habia forma de alcanzarla. Ahora se calcula
+   * el alto disponible y, si debajo del boton no cabe, la caja sube.
+   */
   function ubica() {
     const r = boton.current?.getBoundingClientRect();
-    if (r) setCaja({ top: r.bottom + 6, left: Math.max(8, r.left - 120) });
+    if (!r) return;
+    const MARGEN = 8;
+    const w = ancho ? 384 : 288;
+    const izq = Math.min(
+      Math.max(MARGEN, r.left - 120),
+      window.innerWidth - w - MARGEN,
+    );
+    const alto = Math.min(
+      ancho ? 520 : 360,
+      window.innerHeight - MARGEN * 2,
+    );
+    let top = r.bottom + 6;
+    if (top + alto > window.innerHeight - MARGEN) {
+      top = Math.max(MARGEN, window.innerHeight - alto - MARGEN);
+    }
+    setCaja({ top, left: Math.max(MARGEN, izq), alto });
   }
 
   return (
@@ -1288,10 +1373,17 @@ function Info({
       </button>
       {abierto && caja && (
         <span
-          className="fixed z-50 block w-72 rounded border px-3 py-2 text-[11px] leading-relaxed shadow-lg"
+          className={
+            "fixed z-50 block rounded border px-3 py-2 text-[11px] leading-relaxed shadow-lg " +
+            (ancho ? "w-96 overflow-y-auto whitespace-pre-line" : "w-72")
+          }
           style={{
             top: caja.top,
             left: caja.left,
+            // El alto lo decide `ubica` con la ventana en la mano, no una
+            // fraccion fija: con `70vh` la caja cabia en la pantalla pero
+            // empezaba tan abajo que su final quedaba fuera.
+            maxHeight: ancho ? caja.alto : undefined,
             background: "var(--superficie)",
             borderColor: "var(--borde)",
             color: "var(--tinta-2)",

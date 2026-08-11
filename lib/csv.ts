@@ -28,6 +28,12 @@ const COLUMNAS: [string, (r: RasgoSede) => string | number][] = [
   ["ptie", (r) => (r.properties.ptie ? "si" : "no")],
   ["ptie_estado", (r) => r.properties.ptie_estado ?? ""],
   ["ptie_anio_intervencion", (r) => r.properties.ptie_anio ?? ""],
+  // Vacio, no cero, en las sedes que el FFIE nunca visito: no haber sido
+  // visitada es no saber. Ver FICHA_IVID en lib/datos.ts.
+  ["ivid", (r) => r.properties.ivid ?? ""],
+  ["ivid_techos", (r) => r.properties.ivid_techos ?? ""],
+  ["ivid_muros", (r) => r.properties.ivid_muros ?? ""],
+  ["ivid_pisos", (r) => r.properties.ivid_pisos ?? ""],
   ["mmi", (r) => r.properties.mmi],
   ["nivel_mmi", (r) => r.properties.nivel],
   ["encuestada", (r) => (r.properties.encuestada ? "si" : "no")],

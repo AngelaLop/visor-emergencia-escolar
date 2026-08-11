@@ -22,13 +22,23 @@ export type Sede = {
    *  2024. El marco de sedes es de 2022 y en cuatro anos hay escuelas que se
    *  liquidaron, se fusionaron o quedaron inactivas. */
   vigencia_2024?: string;
-  /** Si la institucion esta en la lista de focalizacion del PTIES. */
+  /** Si la sede esta en la lista de focalizacion del PTIES. */
   ptie?: boolean;
   /** intervenida / programada / no_focalizada / no_ptie. El ano de
    *  intervencion llega hasta 2029, asi que estar focalizada no es estar ya
    *  intervenida. */
   ptie_estado?: string;
   ptie_anio?: number | null;
+  /** Indice de vulnerabilidad de infraestructura declarada, de 0 a 5. Nulo en
+   *  las sedes que el FFIE nunca visito: no haber sido visitada es no saber, y
+   *  un cero ahi diria que esta bien. Ver FICHA_IVID en lib/datos.ts. */
+  ivid?: number | null;
+  ivid_techos?: number | null;
+  ivid_muros?: number | null;
+  ivid_pisos?: number | null;
+  /** Cuantos de los tres elementos quedaron con severidad sin clasificar
+   *  porque el rector marco "Otro" y ninguna casilla. */
+  ivid_sin_clasificar?: number | null;
   rwi?: number;
   mmi: number;
   nivel: string;
@@ -163,6 +173,8 @@ export type Filtros = {
   areas: string[];
   vigencias: string[];
   pties: string[];
+  /** Categorias del indice de vulnerabilidad, de 0 a 4. Ver `categoriaIvid`. */
+  ividCategorias: number[];
   secretarias: string[];
   quintiles: number[];
   matriculaMin: number;
@@ -183,9 +195,12 @@ export const FILTROS_INICIALES: Filtros = {
   // albergue o puede caerse. Lo que no puede es aportar alumnos que ya no
   // estan, y de eso se encarga la matricula de 2024, no este filtro.
   vigencias: [],
-  // Vacio es "todas". El PTIES marca 72 instituciones en todo el pais y 35 en
+  // Vacio es "todas". El PTIES marca 72 sedes en todo el pais y 35 en
   // esta zona: abrir filtrando por ellas escondería el mapa entero.
   pties: [],
+  // Vacio es "todas las visitadas". El filtro aparece dentro de la vista de
+  // visitadas, que es la unica donde todas las sedes en juego tienen indice.
+  ividCategorias: [],
   secretarias: [],
   quintiles: [],
   matriculaMin: 0,
