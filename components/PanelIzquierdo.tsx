@@ -17,21 +17,37 @@
 import { useRef, useState } from "react";
 
 import { MarcaGitHub } from "@/components/Iconos";
-import { COLOR_BANDA, REPORTE, svgEpicentro } from "@/components/Mapa";
+import { COLOR_BANDA, COLOR_FUENTE, svgEpicentro } from "@/components/Mapa";
 import type { Capas } from "@/components/Mapa";
 import {
   FICHA_IVID,
-  NOMBRE_AREA,
   NOMBRE_IVID,
   NOMBRE_PTIE,
   NOMBRE_QUINTIL,
   NOMBRE_VIGENCIA,
+  NOMBRE_ZONA,
+  TONO_IVID,
   horaLocal,
   miles,
 } from "@/lib/datos";
 import type { Resumen } from "@/lib/datos";
-import { BANDAS, EXPLICACION_MMI, FUENTE_MMI } from "@/lib/tipos";
-import type { Evento, Filtros, Reporte, Tema } from "@/lib/tipos";
+import {
+  BANDAS,
+  EXPLICACION_MMI,
+  FUENTE_MMI,
+  GRAVEDAD,
+  NOMBRE_ESTADO,
+  NOMBRE_FUENTE,
+} from "@/lib/tipos";
+import type {
+  Dano,
+  EstadoDano,
+  Evento,
+  Filtros,
+  FuenteDano,
+  Reporte,
+  Tema,
+} from "@/lib/tipos";
 
 type Props = {
   evento: Evento | null;
@@ -44,8 +60,13 @@ type Props = {
   resumenAmplio: Resumen;
   tema: Tema;
   secretarias: string[];
-  areas: string[];
+  /** Los valores de `zona` presentes en los datos, para pintar los botones. */
+  zonas: string[];
   reportes: Reporte[];
+  /** Solo los daños que la selección deja ver. Los arma `danosVisibles`. */
+  danos: Dano[];
+  /** Cuántas sedes con reporte quedaron fuera de la selección actual. */
+  danosFuera: number;
   onIrASede: (dane: string) => void;
   onExportar: () => void;
   /** Cuántas sedes del país entero encuestó el FFIE. */
@@ -114,21 +135,10 @@ export default function PanelIzquierdo(p: Props) {
   );
 }
 
-/** La rampa de los cinco tramos del indice, de menos a mas dano declarado.
- *
- * Ahora si es una gradacion, porque los tramos son del propio indice y estan
- * ordenados. Una sola familia de tono, la del violeta de carencia, que en este
- * mapa ya significa que algo le falta a la escuela. Nunca la rampa de verde a
- * rojo, que es la sacudida del sismo: un tono no puede significar dos cosas en
- * la misma pantalla.
- */
-const TONO_IVID: Record<number, string> = {
-  0: "#cfc9ee",
-  1: "#ada2e2",
-  2: "#8a7bd5",
-  3: "#6754c0",
-  4: "#3d2c94",
-};
+/** Cuántas sedes de una fuente se listan sin desplazamiento. Pasado ese número
+ *  la lista se desplaza por dentro: son tres fuentes en la misma tarjeta y una
+ *  con doce sedes empujaría las otras dos fuera de la pantalla. */
+const MAX_FILAS_VISIBLES = 4;
 
 // ------------------------------------------------------------- 1. evento --
 
@@ -212,20 +222,47 @@ function TarjetaEvento({ evento }: Props) {
 
 // ------------------------------------------------------------- 2. daños --
 
-function TarjetaDanos({ capas, onCapas, reportes, onIrASede }: Props) {
+function TarjetaDanos({
+  capas,
+  onCapas,
+  reportes,
+  danos,
+  danosFuera,
+  onIrASede,
+}: Props) {
   // Recogida al abrir: la primera pantalla tiene que dejar ver el mapa, y quien
   // llega buscando los reportes los despliega de un clic.
   const [abierta, setAbierta] = useState(false);
   // "si" sin tilde es el valor que guarda el CSV de curaduria: es un codigo,
   // no prosa, y cambiarlo romperia las filas ya revisadas.
-  const confirmados = reportes.filter(
-    (r) => r.es_escuela === "si" && r.dane_asignado,
-  );
   const pendientes = reportes.filter((r) => !r.es_escuela.trim());
-  const matricula = confirmados.reduce((a, r) => {
-    const c = r.candidatas.find((x) => x.dane === r.dane_asignado);
-    return a + (c?.matricula ?? 0);
-  }, 0);
+
+  // Una sede, una fila. En Calima El Darien hablaron el alcalde y la rectora:
+  // son dos declaraciones sobre el mismo predio y listarlas dos veces diria que
+  // hay dos escuelas caidas. Se queda la mas grave, que es la que manda el color
+  // y la insignia. Las demas siguen enteras en la ficha de la sede.
+  //
+  // Las sedes sin dano no entran a esta lista. Esta tarjeta es de danos
+  // reportados y una sede de la que se dijo que esta bien no es un dano. El dato
+  // no se pierde: sigue en el archivo y la ficha de esa sede lo muestra.
+  // La lista muestra lo mismo que el mapa dibuja, ni una fila mas: `danos` ya
+  // viene recortado por la selección. Una fila sin punto mandaría a buscar en el
+  // mapa algo que no está.
+  const porFuente = (f: FuenteDano) => {
+    const peor = new Map<string, Dano>();
+    for (const d of danos) {
+      if (d.fuente !== f) continue;
+      const y = peor.get(d.dane);
+      if (!y || GRAVEDAD[d.estado] > GRAVEDAD[y.estado]) peor.set(d.dane, d);
+    }
+    return [...peor.values()];
+  };
+  const sedesDe = (ds: Dano[]) => ds.length;
+  const matriculaDe = (ds: Dano[]) => ds.reduce((a, d) => a + d.matricula, 0);
+  // El numero del encabezado cuenta exactamente los puntos que hay en el mapa,
+  // ni uno mas. Si contara otra cosa, quien cuente los puntos creeria que le
+  // faltan.
+  const sedesConReporte = new Set(danos.map((d) => d.dane)).size;
 
   return (
     <Tarjeta>
@@ -234,13 +271,20 @@ function TarjetaDanos({ capas, onCapas, reportes, onIrASede }: Props) {
           onClick={() => setAbierta(!abierta)}
           className="flex flex-1 items-center gap-2 text-left text-sm font-medium"
         >
-          <span
-            className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-            style={{ background: REPORTE }}
-          />
+          {/* Tres puntos y no uno: el encabezado ya dice que aqui hay tres
+              emisores distintos, antes de desplegar nada. */}
+          <span className="flex shrink-0 gap-0.5">
+            {(["hot", "oficial", "noticia"] as FuenteDano[]).map((f) => (
+              <span
+                key={f}
+                className="inline-block h-2.5 w-2.5 rounded-full"
+                style={{ background: COLOR_FUENTE[f] }}
+              />
+            ))}
+          </span>
           <span>Daños Reportados en Sedes Educativas (SE)</span>
           <span className="num text-xs" style={{ color: "var(--tinta-3)" }}>
-            ({miles(confirmados.length)})
+            ({miles(sedesConReporte)})
           </span>
         </button>
         <button
@@ -262,140 +306,271 @@ function TarjetaDanos({ capas, onCapas, reportes, onIrASede }: Props) {
 
       {abierta && (
         <div className="px-4 pb-3">
-          <p className="mb-3 text-xs leading-relaxed" style={{ color: "var(--tinta-2)" }}>
-            Con la colaboración del Humanitarian OpenStreetMap Team (HOT) se
-            recogen de forma comunitaria fotografías enviadas por WhatsApp, que
-            luego se curan una por una y se emparejan con el directorio oficial
-            de sedes educativas. Aparecer aquí significa que una persona verificó
-            que la fotografía corresponde a esa sede, no que la sede esté dañada.
-          </p>
+          <BloqueFuente
+            fuente="hot"
+            danos={porFuente("hot")}
+            sedes={sedesDe(porFuente("hot"))}
+            matricula={matriculaDe(porFuente("hot"))}
+            onIrASede={onIrASede}
+            nota="Fotografías enviadas por WhatsApp, recogidas con el Humanitarian OpenStreetMap Team (HOT) y curadas una por una contra el directorio oficial. Aparecer aquí significa que una persona verificó que la fotografía corresponde a esa sede. No significa que la sede esté dañada."
+            vacio={
+              <>
+                Todavía no hay ningún reporte confirmado.
+                {pendientes.length > 0 ? (
+                  <>
+                    {" "}
+                    Hay <span className="num">{miles(pendientes.length)}</span>{" "}
+                    esperando revisión en{" "}
+                    <a href="/triaje" className="underline">
+                      la bandeja de triaje
+                    </a>
+                    .
+                  </>
+                ) : null}
+              </>
+            }
+          />
 
           {/* El canal de reporte es el de HOT, no uno propio. Duplicarlo daria
-              una segunda cola que nadie revisa. El enlace va aqui y no en el
-              encabezado porque quien acaba de leer de donde salen estos puntos
-              es quien puede aportar el siguiente. */}
+              una segunda cola que nadie revisa. Va del rojo de HOT y no del
+              turquesa de la interfaz: el boton pertenece a esa fuente, y el
+              color es lo que lo dice sin tener que explicarlo. */}
           <a
             href="https://chatmap.hotosm.org/"
             target="_blank"
             rel="noreferrer"
-            className="mb-3 flex items-center justify-center gap-2 rounded border px-3 py-2 text-xs font-medium"
-            style={{ borderColor: "var(--cima)", color: "var(--cima)" }}
+            className="mb-4 flex items-center justify-center gap-2 rounded border px-3 py-2 text-xs font-medium"
+            style={{
+              borderColor: COLOR_FUENTE.hot,
+              color: COLOR_FUENTE.hot,
+            }}
           >
             Reportar daños en SE
             <span aria-hidden="true">↗</span>
           </a>
 
-          {confirmados.length > 0 ? (
-            <>
-              <div
-                className="mb-3 grid grid-cols-2 gap-3 rounded px-3 py-2"
-                style={{ background: "var(--plano)" }}
-              >
-                <div>
-                  <div className="num text-2xl font-semibold leading-none">
-                    {miles(confirmados.length)}
-                  </div>
-                  <div className="text-xs" style={{ color: "var(--tinta-2)" }}>
-                    {confirmados.length === 1 ? "sede reportada" : "sedes reportadas"}
-                  </div>
-                </div>
-                <div>
-                  <div
-                    className="num text-2xl font-semibold leading-none"
-                    style={{ color: "var(--critico)" }}
-                  >
-                    {miles(matricula)}
-                  </div>
-                  <div className="text-xs" style={{ color: "var(--tinta-2)" }}>
-                    {confirmados.length === 1
-                      ? "estudiantes en la sede"
-                      : "estudiantes en esas sedes"}
-                  </div>
-                </div>
-              </div>
+          <BloqueFuente
+            fuente="oficial"
+            danos={porFuente("oficial")}
+            sedes={sedesDe(porFuente("oficial"))}
+            matricula={matriculaDe(porFuente("oficial"))}
+            onIrASede={onIrASede}
+            nota="Reporte del equipo PTIES con corte al 10 de agosto. Falta la validación puntual de las sedes."
+            vacio="Todavía no hay ningún reporte oficial cargado."
+          />
 
-              {confirmados.map((r) => {
-                const c = r.candidatas.find((x) => x.dane === r.dane_asignado);
-                return (
-                  <button
-                    key={r.id}
-                    onClick={() => onIrASede(r.dane_asignado)}
-                    className="mb-2 block w-full overflow-hidden rounded border text-left"
-                    style={{ borderColor: "var(--linea)" }}
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={r.url_foto}
-                      alt="Fotografía enviada por un ciudadano"
-                      className="h-36 w-full object-cover"
-                      style={{ background: "var(--plano)" }}
-                      loading="lazy"
-                    />
-                    <span className="block px-2.5 py-2">
-                      <span className="block text-xs font-medium">
-                        {c?.sede ?? r.dane_asignado}
-                      </span>
-                      <span
-                        className="num block text-[10px]"
-                        style={{ color: "var(--tinta-3)" }}
-                      >
-                        Código DANE {r.dane_asignado}
-                      </span>
-                      <span
-                        className="num block text-xs"
-                        style={{ color: "var(--tinta-2)" }}
-                      >
-                        {miles(c?.matricula ?? 0)} estudiantes
-                      </span>
-                      <span
-                        className="block text-xs"
-                        style={{ color: "var(--tinta-2)" }}
-                      >
-                        {c?.mpio}
-                        {c ? `, reportado a ${c.dist_m} m de la sede` : ""}
-                      </span>
-                      {c && !c.encuestada && (
-                        <span
-                          className="block text-[10px]"
-                          style={{ color: "var(--sede-ignota)" }}
-                        >
-                          Nunca fue encuestada
-                        </span>
-                      )}
-                      <span
-                        className="block text-[10px]"
-                        style={{ color: "var(--tinta-3)" }}
-                      >
-                        {r.fecha}, confirmado por{" "}
-                        {r.revisado_por || "sin registrar"}
-                      </span>
-                    </span>
-                  </button>
-                );
-              })}
-            </>
-          ) : (
+          <BloqueFuente
+            fuente="noticia"
+            danos={porFuente("noticia")}
+            sedes={sedesDe(porFuente("noticia"))}
+            matricula={matriculaDe(porFuente("noticia"))}
+            onIrASede={onIrASede}
+            nota="Declaraciones de autoridades recogidas por medios. Cada una guarda quién lo dijo, con nombre y cargo, la fecha y la cita textual. Es la única fuente que hasta hoy afirma el daño de una sede concreta."
+            vacio="Todavía no hay ninguna noticia cargada."
+          />
+
+          {danosFuera > 0 && (
             <p
-              className="rounded border px-3 py-2 text-xs"
-              style={{ borderColor: "var(--linea)", color: "var(--tinta-2)" }}
+              className="rounded border px-3 py-2 text-[11px] leading-relaxed"
+              style={{ borderColor: "var(--linea)", color: "var(--tinta-3)" }}
             >
-              Todavía no hay ningún reporte confirmado.
-              {pendientes.length > 0 ? (
-                <>
-                  {" "}
-                  Hay <span className="num">{miles(pendientes.length)}</span>{" "}
-                  esperando revisión en{" "}
-                  <a href="/triaje" className="underline">
-                    la bandeja de triaje
-                  </a>
-                  .
-                </>
-              ) : null}
+              Hay <span className="num">{miles(danosFuera)}</span> sedes con
+              reporte que la selección actual deja fuera. Se ven al soltar los
+              filtros que las excluyen.
             </p>
           )}
         </div>
       )}
     </Tarjeta>
+  );
+}
+
+/** Una fuente de reporte, con su encabezado, su nota y su lista.
+ *
+ * Las tres se dibujan igual a proposito. Lo unico que cambia es el color del
+ * punto y lo que dice la nota, porque lo que hay que poder comparar de un
+ * vistazo es quien lo afirma y con que fuerza, no el formato de la tarjeta.
+ */
+function BloqueFuente({
+  fuente,
+  danos,
+  sedes,
+  matricula,
+  nota,
+  vacio,
+  onIrASede,
+}: {
+  fuente: FuenteDano;
+  danos: Dano[];
+  sedes: number;
+  matricula: number;
+  nota: string;
+  vacio: React.ReactNode;
+  onIrASede: (dane: string) => void;
+}) {
+  const [abierto, setAbierto] = useState(false);
+  // Del mas grave al menos grave, y dentro de eso de mayor a menor matricula.
+  // Es el orden en que hay que ir a mirar.
+  const orden = [...danos].sort(
+    (a, b) =>
+      GRAVEDAD[b.estado] - GRAVEDAD[a.estado] || b.matricula - a.matricula,
+  );
+
+  return (
+    <div className="mb-4">
+      {/* Las cifras van en su propia linea y con la palabra entera. Abreviado a
+          "est." se confundia con estimados, que es justo lo que no son: son
+          alumnos contados. */}
+      <div className="mb-1.5 flex items-start gap-2">
+        <span
+          className="mt-1 inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+          style={{ background: COLOR_FUENTE[fuente] }}
+        />
+        <span className="flex-1">
+          <span className="block text-xs font-medium">
+            {NOMBRE_FUENTE[fuente]}
+          </span>
+          <span className="num block text-xs" style={{ color: "var(--tinta-2)" }}>
+            {miles(sedes)} {sedes === 1 ? "sede" : "sedes"}
+            {" · "}
+            {miles(matricula)} {matricula === 1 ? "estudiante" : "estudiantes"}
+          </span>
+        </span>
+        <button
+          onClick={() => setAbierto(!abierto)}
+          style={{ color: "var(--tinta-3)" }}
+          aria-label={abierto ? "plegar la fuente" : "desplegar la fuente"}
+        >
+          {abierto ? "▾" : "▸"}
+        </button>
+      </div>
+
+      {abierto && (
+        <>
+          <p
+            className="mb-2 text-[11px] leading-relaxed"
+            style={{ color: "var(--tinta-3)" }}
+          >
+            {nota}
+          </p>
+          {orden.length === 0 ? (
+            <p
+              className="rounded border px-3 py-2 text-xs"
+              style={{ borderColor: "var(--linea)", color: "var(--tinta-2)" }}
+            >
+              {vacio}
+            </p>
+          ) : (
+            // Hasta cuatro sedes la lista va entera. Con más se desplaza por
+            // dentro, para que una fuente con doce sedes no empuje las otras dos
+            // fuera de la pantalla. `overscroll-contain` corta el encadenamiento:
+            // sin él, al llegar al final de esta lista el gesto seguiría
+            // moviendo la columna entera de tarjetas.
+            <div
+              className={
+                orden.length > MAX_FILAS_VISIBLES
+                  ? "max-h-[26rem] overflow-y-auto overscroll-contain pr-1"
+                  : undefined
+              }
+            >
+              {orden.map((d) => (
+                <FilaDano key={d.id} dano={d} onIrASede={onIrASede} />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Fuente, estado y matrícula, que es lo que se pidió que dijera cada fila.
+ *
+ * El aviso de alcance no es un adorno. Cuando el reporte habla de la
+ * institución, la fila tiene que decir en cuántas sedes puede estar el daño, o
+ * quien la lea entenderá que está en esta.
+ */
+function FilaDano({
+  dano: d,
+  onIrASede,
+}: {
+  dano: Dano;
+  onIrASede: (dane: string) => void;
+}) {
+  const color = COLOR_FUENTE[d.fuente];
+  const deGrupo = d.alcance !== "sede" && (d.n_sedes_institucion ?? 1) > 1;
+
+  return (
+    <button
+      onClick={() => onIrASede(d.dane)}
+      className="mb-2 block w-full overflow-hidden rounded border text-left"
+      style={{ borderColor: "var(--linea)" }}
+    >
+      {d.url_foto && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={d.url_foto}
+          alt="Fotografía enviada por un ciudadano"
+          className="h-36 w-full object-cover"
+          style={{ background: "var(--plano)" }}
+          loading="lazy"
+        />
+      )}
+      <span className="block px-2.5 py-2">
+        <span className="mb-0.5 flex items-center gap-1.5">
+          <Insignia estado={d.estado} color={color} />
+          <span className="flex-1 text-xs font-medium">{d.sede}</span>
+        </span>
+        <span className="num block text-[10px]" style={{ color: "var(--tinta-3)" }}>
+          Código DANE {d.dane}
+        </span>
+        <span className="num block text-xs" style={{ color: "var(--tinta-2)" }}>
+          {miles(d.matricula)} estudiantes
+          {d.matricula_es_de_2022 ? " (2022)" : ""}
+        </span>
+        <span className="block text-xs" style={{ color: "var(--tinta-2)" }}>
+          {d.mpio}, {d.depto}
+        </span>
+        {deGrupo && (
+          <span className="mt-0.5 block text-[10px]" style={{ color }}>
+            El reporte habla de {d.institucion_reportada ?? "la institución"}. El
+            daño puede estar en cualquiera de sus{" "}
+            <span className="num">{d.n_sedes_institucion}</span> sedes.
+          </span>
+        )}
+        {d.encuestada === false && (
+          <span
+            className="block text-[10px]"
+            style={{ color: "var(--sede-ignota)" }}
+          >
+            Nunca fue encuestada
+          </span>
+        )}
+        <span className="block text-[10px]" style={{ color: "var(--tinta-3)" }}>
+          {d.fecha}
+          {d.quien ? `, ${d.quien}` : ""}
+          {d.cargo ? `, ${d.cargo}` : ""}
+        </span>
+      </span>
+    </button>
+  );
+}
+
+/** La etiqueta del estado. Va del color de la fuente para no abrir un cuarto
+ *  canal de color, y el "sin daño" va hueco porque no es una alerta. */
+function Insignia({ estado, color }: { estado: EstadoDano; color: string }) {
+  const hueco = estado === "sin_dano" || estado === "sin_verificar";
+  return (
+    <span
+      className="shrink-0 rounded px-1.5 py-px text-[10px] font-medium uppercase tracking-wide"
+      style={{
+        background: hueco ? "transparent" : color,
+        color: hueco ? color : "#fff",
+        border: `1px solid ${color}`,
+      }}
+    >
+      {NOMBRE_ESTADO[estado]}
+    </span>
   );
 }
 
@@ -408,7 +583,7 @@ function TarjetaCapas({
   onCapas,
   resumen,
   secretarias,
-  areas,
+  zonas,
 }: Props) {
   const [abierta, setAbierta] = useState(true);
   const [intensidadAbierta, setIntensidadAbierta] = useState(true);
@@ -546,16 +721,19 @@ function TarjetaCapas({
 
             {masFiltros && (
               <div className="mt-2">
-                <Etiqueta>Área</Etiqueta>
+                {/* Zona y no "área": el área de tres categorías es otra columna
+                    y vive en la ficha de cada sede. Con el mismo nombre para
+                    las dos, quien filtra aquí cree que está filtrando aquello. */}
+                <Etiqueta>Zona</Etiqueta>
                 <div className="mb-3">
                   <Chips>
-                    {areas.map((a) => (
+                    {zonas.map((z) => (
                       <Opcion
-                        key={a}
-                        activo={filtros.areas.includes(a)}
-                        onClick={() => set({ areas: alternaLista(filtros.areas, a) })}
+                        key={z}
+                        activo={filtros.zonas.includes(z)}
+                        onClick={() => set({ zonas: alternaLista(filtros.zonas, z) })}
                       >
-                        {NOMBRE_AREA[a] ?? a}
+                        {NOMBRE_ZONA[z] ?? z}
                       </Opcion>
                     ))}
                   </Chips>

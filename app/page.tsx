@@ -23,18 +23,23 @@ import {
   cargaColombia,
   cargaContornos,
   cargaEvento,
+  cargaDanos,
   cargaReportes,
   cargaSedes,
+  danosFuera,
+  danosVisibles,
   filtra,
   resume,
 } from "@/lib/datos";
 import { FILTROS_INICIALES } from "@/lib/tipos";
 import type {
   ColeccionSedes,
+  Dano,
   Evento,
   Filtros,
   MapaBase,
   Reporte,
+  Sede,
   Tema,
 } from "@/lib/tipos";
 
@@ -57,6 +62,7 @@ export default function Pagina() {
   const [colombia, setColombia] = useState<unknown | null>(null);
   const [mapaBase, setMapaBase] = useState<MapaBase>("claro");
   const [reportes, setReportes] = useState<Reporte[]>([]);
+  const [danos, setDanos] = useState<Dano[]>([]);
   const [filtros, setFiltros] = useState<Filtros>(FILTROS_INICIALES);
   const [capas, setCapas] = useState<Capas>(CAPAS_INICIALES);
   const [seleccion, setSeleccion] = useState<string | null>(null);
@@ -74,14 +80,16 @@ export default function Pagina() {
       cargaBordeGrilla(),
       cargaColombia(),
       cargaReportes(),
+      cargaDanos(),
     ])
-      .then(([e, s, c, b, co, r]) => {
+      .then(([e, s, c, b, co, r, dn]) => {
         setEvento(e as Evento);
         setColeccion(s as ColeccionSedes);
         setContornos(c);
         setBordeGrilla(b);
         setColombia(co);
         setReportes(r as Reporte[]);
+        setDanos(dn as Dano[]);
       })
       .catch((e: Error) => setError(e.message));
 
@@ -116,6 +124,17 @@ export default function Pagina() {
     [coleccion, filtros],
   );
   const resumen = useMemo(() => resume(seleccionadas), [seleccionadas]);
+
+  // Los puntos de daño se derivan de la selección, no de los filtros. Así
+  // cualquier filtro nuevo los afecta sin que haya que acordarse de esta capa.
+  const danosEnMapa = useMemo(
+    () => danosVisibles(danos, seleccionadas),
+    [danos, seleccionadas],
+  );
+  const nDanosFuera = useMemo(
+    () => danosFuera(danos, danosEnMapa),
+    [danos, danosEnMapa],
+  );
 
   // El mismo recorte pero sin los sub-filtros de la última tarjeta. El relato
   // de "de la selección, N fueron encuestadas y el X % declaró avería" tiene
@@ -174,24 +193,64 @@ export default function Pagina() {
       .map(([s]) => s);
   }, [coleccion, evento]);
 
-  // El area sale de `zona`, la binaria del SIMAT, y no de `area_class`. La
+  // El filtro es `zona`, la binaria del SIMAT, y no `area_class`. La
   // clasificacion de tres categorias se calcula sobre una grilla de poblacion
   // de 1 km y falta en 4.066 de estas sedes, asi que el filtro mostraba una
   // opcion "sin dato" con una de cada seis escuelas dentro. `zona` no tiene un
   // solo nulo. Lo que se pierde es distinguir centro poblado de vereda
   // dispersa; ver el issue de cobertura de area_class en docs/.
-  const areas = useMemo(() => {
+  const zonas = useMemo(() => {
     const v = new Set(coleccion?.features.map((f) => f.properties.zona ?? "") ?? []);
     v.delete("");
     return Array.from(v).sort();
   }, [coleccion]);
 
-  const sedeAbierta = useMemo(
-    () =>
-      coleccion?.features.find((f) => f.properties.dane === seleccion)?.properties ??
-      null,
-    [coleccion, seleccion],
-  );
+  /** La sede de la ficha.
+   *
+   * Sale de la colección, y si no está ahí se arma con lo que trae el propio
+   * daño. Ese caso no es teórico: las 30 sedes de la Normal Superior La
+   * Inmaculada están en Barbacoas, al sur del borde de la grilla del USGS, y no
+   * tienen MMI, así que `sedes_evento.geojson` no las incluye. Sin este respaldo,
+   * tocar su tarjeta en la lista no abriría nada.
+   *
+   * El MMI queda como NaN a propósito y no como cero: no es que no se haya
+   * sacudido, es que el modelo no llega hasta ahí. La ficha esconde ese bloque
+   * cuando el número no es finito.
+   */
+  const sedeAbierta = useMemo(() => {
+    const enColeccion = coleccion?.features.find(
+      (f) => f.properties.dane === seleccion,
+    )?.properties;
+    if (enColeccion) return enColeccion;
+    const d = danos.find((x) => x.dane === seleccion);
+    if (!d) return null;
+    return {
+      dane: d.dane,
+      sede: d.sede,
+      establecimiento: d.establecimiento,
+      mpio: d.mpio,
+      depto: d.depto,
+      matricula: d.matricula,
+      encuestada: d.encuestada ?? false,
+      mmi: NaN,
+      nivel: "sin dato",
+      banda: NaN,
+    } satisfies Sede;
+  }, [coleccion, danos, seleccion]);
+
+  /** Abrir una sede lleva el mapa hasta ella, venga de la lista o del mapa.
+   *
+   * El contador es necesario: si se toca dos veces la misma sede, el estado no
+   * cambiaría y el mapa no volvería a moverse.
+   *
+   * Cerrar la ficha pasa `null` y no mueve nada: quien cierra quiere seguir
+   * mirando donde está, no volver a ninguna parte.
+   */
+  const [foco, setFoco] = useState<{ dane: string; n: number } | null>(null);
+  const irASede = (dane: string | null) => {
+    setSeleccion(dane);
+    if (dane) setFoco((f) => ({ dane, n: (f?.n ?? 0) + 1 }));
+  };
 
   if (error) {
     return (
@@ -216,14 +275,15 @@ export default function Pagina() {
         colombia={colombia}
         evento={evento}
         sedes={seleccionadas}
-        reportes={reportes}
+        danos={danosEnMapa}
+        foco={foco}
         danesConReporte={danesConReporte}
         filtros={filtros}
         capas={capas}
         mapaBase={mapaBase}
         tema={tema}
         seleccion={seleccion}
-        onSeleccion={setSeleccion}
+        onSeleccion={irASede}
       />
 
       <PanelIzquierdo
@@ -236,9 +296,11 @@ export default function Pagina() {
         resumenAmplio={resumenAmplio}
         tema={tema}
         secretarias={secretarias}
-        areas={areas}
+        zonas={zonas}
         reportes={reportes}
-        onIrASede={setSeleccion}
+        danos={danosEnMapa}
+        danosFuera={nDanosFuera}
+        onIrASede={irASede}
         onExportar={() => descarga(seleccionadas)}
         encuestadasPais={ENCUESTADAS_PAIS}
       />
@@ -258,6 +320,7 @@ export default function Pagina() {
             <FichaSede
               sede={sedeAbierta}
               reportes={reportes}
+              danos={danos}
               onCerrar={() => setSeleccion(null)}
             />
           </div>

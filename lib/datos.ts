@@ -8,6 +8,7 @@
 
 import type {
   ColeccionSedes,
+  Dano,
   Evento,
   Filtros,
   RasgoSede,
@@ -74,6 +75,22 @@ export async function cargaReportes(): Promise<Reporte[]> {
 }
 
 /** Las huellas de una sede, que solo existen para las que estan en MMI VI o mas. */
+/** Los daños reportados por las tres fuentes, ya unidos por el script 27.
+ *
+ * Si el archivo no está, el visor sigue funcionando sin la capa. Es una capa
+ * que se agrega sobre un mapa que ya respondía su pregunta sin ella.
+ */
+export async function cargaDanos(): Promise<Dano[]> {
+  try {
+    const r = await fetch("datos/danos.json");
+    if (!r.ok) return [];
+    const d = await r.json();
+    return (d.danos ?? []) as Dano[];
+  } catch {
+    return [];
+  }
+}
+
 export async function cargaHuellas(dane: string): Promise<unknown | null> {
   const r = await fetch(`datos/huellas/${dane}.geojson`);
   if (!r.ok) return null;
@@ -89,7 +106,7 @@ export function pasa(s: Sede, f: Filtros): boolean {
   if (f.secretarias.length && !f.secretarias.includes(s.secretaria ?? "")) {
     return false;
   }
-  if (f.areas.length && !f.areas.includes(s.zona ?? "")) {
+  if (f.zonas.length && !f.zonas.includes(s.zona ?? "")) {
     return false;
   }
   if (f.vigencias.length && !f.vigencias.includes(s.vigencia_2024 ?? "sin_reporte")) {
@@ -132,6 +149,84 @@ export function pasa(s: Sede, f: Filtros): boolean {
 export function filtra(col: ColeccionSedes, f: Filtros): RasgoSede[] {
   return col.features.filter((x) => pasa(x.properties, f));
 }
+
+/** Los daños que se dibujan, dada la selección de sedes que hay en pantalla.
+ *
+ * La regla de fondo es que un punto de daño no puede aparecer sobre una sede que
+ * la selección dejó fuera. Si la pantalla está mostrando solo las visitadas por
+ * el FFIE, una sede nunca visitada no puede seguir ahí con un punto de color
+ * encima: el mapa estaría contando dos cosas distintas a la vez.
+ *
+ * Por eso no se reimplementan los filtros aquí. Se recibe el conjunto de sedes
+ * que ya pasó por `pasa()`, con todos sus filtros, y el daño entra solo si su
+ * sede está en ese conjunto. Cualquier filtro que se agregue mañana funciona sin
+ * tocar esta función.
+ *
+ * Encima van tres condiciones propias de esta capa. Sin coordenada no hay dónde
+ * dibujarlo. Debajo de `BANDA_MINIMA_DANO` no se dibuja, aunque la sede esté
+ * seleccionada. Y "sin daño" tampoco: esta capa es de daños reportados, y un
+ * punto que significa "ya preguntamos y está bien" solo le quita espacio al que
+ * significa que se cayó. Ninguno de los dos datos se pierde, siguen en el
+ * archivo y en la ficha de la sede.
+ *
+ * Las sedes sin banda quedan fuera por partida doble: no están en la colección,
+ * porque están fuera de la grilla del ShakeMap del USGS, así que tampoco están
+ * en ninguna selección.
+ */
+export function danosVisibles(danos: Dano[], sedes: RasgoSede[]): Dano[] {
+  const dentro = new Set(sedes.map((f) => f.properties.dane));
+  return danos.filter(
+    (d) =>
+      dentro.has(d.dane) &&
+      d.lon != null &&
+      d.lat != null &&
+      d.banda != null &&
+      d.banda >= BANDA_MINIMA_DANO &&
+      d.estado !== "sin_dano",
+  );
+}
+
+/** Los daños que existen y no se están viendo, contados por sede.
+ *
+ * No es un recorte silencioso: la tarjeta lo dice. Se cuentan solo los que
+ * podrían llegar a verse cambiando los filtros, o sea los que afirman daño y
+ * pasan el piso de intensidad. Los "sin daño" y los de fuera de la grilla no
+ * cuentan, porque no hay filtro que los traiga.
+ */
+export function danosFuera(danos: Dano[], visibles: Dano[]): number {
+  const vistos = new Set(visibles.map((d) => d.dane));
+  const fuera = new Set(
+    danos
+      .filter(
+        (d) =>
+          !vistos.has(d.dane) &&
+          d.estado !== "sin_dano" &&
+          d.lon != null &&
+          d.banda != null &&
+          d.banda >= BANDA_MINIMA_DANO,
+      )
+      .map((d) => d.dane),
+  );
+  return fuera.size;
+}
+
+/** Debajo de esta banda no se dibuja daño reportado.
+ *
+ * Hasta 5,0 el USGS describe un sismo que se siente y que tumba objetos de los
+ * estantes, no que agriete un edificio. Un reporte de daño ahí es más probable
+ * que sea deterioro previo que alguien miró por primera vez después del sismo,
+ * que daño causado por el sismo.
+ *
+ * El corte está en 5,5 y no en 5,0 por el único caso que toca. Las ocho sedes de
+ * la IEM Pablo VI, en López de Micay, están entre MMI 4,95 y 5,07. Cortando en
+ * 5,0 quedaba una sola dentro, y el reporte del PTIES habla de la institución y
+ * no de ese predio: dejar una de ocho habría sido elegir por el reporte algo que
+ * el reporte no dice. O entran las ocho o no entra ninguna.
+ *
+ * Es un juicio provisional, pendiente de confirmar con el equipo que hizo el
+ * reporte.
+ */
+export const BANDA_MINIMA_DANO = 5.5;
 
 /** Los alumnos que se le cuentan hoy a una sede.
  *
@@ -231,6 +326,26 @@ export const NOMBRE_IVID: Record<number, string> = {
   2: "2 a 2,99",
   3: "3 a 3,99",
   4: "4 a 5",
+};
+
+/** La rampa de los cinco tramos del índice, de menos a más daño declarado.
+ *
+ * Es una gradación de verdad, porque los tramos son del propio índice y están
+ * ordenados. Una sola familia de tono, la del violeta de carencia, que en este
+ * mapa ya significa que algo le falta a la escuela. Nunca la rampa de verde a
+ * rojo, que es la sacudida del sismo: un tono no puede significar dos cosas en
+ * la misma pantalla.
+ *
+ * Vive aquí y no en el panel porque la usan los dos, la leyenda de la tarjeta y
+ * los puntos del mapa. Con una copia en cada sitio, un retoque de color dejaría
+ * la leyenda diciendo una cosa y el mapa pintando otra.
+ */
+export const TONO_IVID: Record<number, string> = {
+  0: "#cfc9ee",
+  1: "#ada2e2",
+  2: "#8a7bd5",
+  3: "#6754c0",
+  4: "#3d2c94",
 };
 
 export type Resumen = {
@@ -356,10 +471,33 @@ export const NOMBRE_QUINTIL: Record<number, string> = {
 };
 
 /** Las claves son los valores de `zona` del SIMAT, que vienen en mayuscula. Se
- *  muestran en minuscula porque son etiquetas de un boton, no un codigo. */
-export const NOMBRE_AREA: Record<string, string> = {
+ *  muestran en minuscula porque son etiquetas de un boton, no un codigo.
+ *
+ *  `zona` es una declaracion administrativa y cubre las 26.591 sedes sin un solo
+ *  nulo. Es la que filtra el mapa. No confundir con `area_class`, que es otra
+ *  cosa y tiene su propio diccionario aqui abajo. */
+export const NOMBRE_ZONA: Record<string, string> = {
   URBANA: "urbana",
   RURAL: "rural",
+};
+
+/** Las claves son los valores de `area_class`, que llegan en minuscula.
+ *
+ * No es la binaria del SIMAT sino un calculo sobre la grilla de poblacion de
+ * WorldPop: urbana si la densidad llega a 300 hab/km² y la poblacion a 5.000;
+ * no urbana si llega a 150 hab/km² y la poblacion queda entre 200 y 5.000;
+ * dispersa el resto. La diferencia que aporta sobre `zona` es justamente la que
+ * `zona` esconde, la de un centro poblado frente a una vereda dispersa, que
+ * para llegar a una escuela es toda la diferencia.
+ *
+ * Hasta ahora este diccionario y el de `zona` eran uno solo, con las llaves en
+ * mayuscula del SIMAT, asi que la busqueda nunca acertaba y la ficha imprimia
+ * el valor crudo: 1.621 sedes decian `no_urbana`, con guion bajo.
+ */
+export const NOMBRE_AREA: Record<string, string> = {
+  urbana: "urbana",
+  no_urbana: "centro poblado",
+  dispersa: "rural dispersa",
 };
 
 /** Estado de la sede frente al PTIES.

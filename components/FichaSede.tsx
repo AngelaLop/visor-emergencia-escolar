@@ -17,24 +17,28 @@
 import { useEffect } from "react";
 
 import Imagen from "@/components/Imagen";
+import { COLOR_FUENTE } from "@/components/Mapa";
 import {
   CALIDAD_COORD,
   NOMBRE_AREA,
   NOMBRE_QUINTIL,
+  NOMBRE_ZONA,
   CORTE_ESTRUCTURAL,
   SIGNIFICADO_MMI,
   alumnos,
   miles,
 } from "@/lib/datos";
-import type { Reporte, Sede } from "@/lib/tipos";
+import { GRAVEDAD, NOMBRE_ESTADO, NOMBRE_FUENTE } from "@/lib/tipos";
+import type { Dano, Reporte, Sede } from "@/lib/tipos";
 
 type Props = {
   sede: Sede;
   reportes: Reporte[];
+  danos: Dano[];
   onCerrar: () => void;
 };
 
-export default function FichaSede({ sede, reportes, onCerrar }: Props) {
+export default function FichaSede({ sede, reportes, danos, onCerrar }: Props) {
   // Escape cierra. En el telefono la ficha tapa el mapa, asi que el boton de
   // cerrar no puede ser la unica salida.
   useEffect(() => {
@@ -46,9 +50,18 @@ export default function FichaSede({ sede, reportes, onCerrar }: Props) {
   }, [onCerrar]);
 
   const verificada = sede.calidad_coord === "gps_validated";
+  // Las sedes que llegan desde un daño y no desde la colección no tienen MMI,
+  // porque están fuera de la grilla del USGS. Ver `sedeAbierta` en app/page.tsx.
+  const conMmi = Number.isFinite(sede.mmi);
   const mios = reportes.filter(
     (r) => r.es_escuela === "si" && r.dane_asignado === sede.dane,
   );
+  // Del mas grave al menos grave. Si el alcalde dice que colapso y el reporte
+  // oficial dice que la institucion tuvo danos, lo primero que hay que leer es
+  // el colapso.
+  const misDanos = danos
+    .filter((d) => d.dane === sede.dane)
+    .sort((a, b) => GRAVEDAD[b.estado] - GRAVEDAD[a.estado]);
 
   return (
     <div
@@ -111,9 +124,26 @@ export default function FichaSede({ sede, reportes, onCerrar }: Props) {
           )}
         </div>
         <div>
-          <div className="num text-xl font-semibold">
-            {sede.nivel} <span className="text-sm">({sede.mmi.toFixed(1).replace(".", ",")})</span>
-          </div>
+          {/* Sin MMI no es "cero sacudida", es que la grilla del USGS no llega
+              hasta ahí. Poner un número inventado sería peor que no poner
+              ninguno, así que se dice qué falta y por qué. */}
+          {conMmi ? (
+            // Dos decimales y no uno. Con uno, una sede de 6,49 se mostraba
+            // como "6,5", que es tambien el nombre de la banda de arriba, y el
+            // mapa la pintaba en la de 6,0. El numero contradecia la mancha en
+            // 1.972 sedes. El valor exportado tiene dos decimales: se muestra
+            // como es.
+            <div className="num text-xl font-semibold">
+              {sede.nivel}{" "}
+              <span className="text-sm">
+                ({sede.mmi.toFixed(2).replace(".", ",")})
+              </span>
+            </div>
+          ) : (
+            <div className="text-xl font-semibold" style={{ color: "var(--tinta-3)" }}>
+              sin dato
+            </div>
+          )}
           <div className="text-xs" style={{ color: "var(--tinta-2)" }}>
             intensidad estimada
           </div>
@@ -121,9 +151,31 @@ export default function FichaSede({ sede, reportes, onCerrar }: Props) {
       </div>
 
       <p className="px-4 pb-3 text-xs" style={{ color: "var(--tinta-2)" }}>
-        MMI {sede.nivel}: {SIGNIFICADO_MMI[sede.nivel] ?? "sin descripción"}. Es la
-        sacudida que estima el modelo del USGS, no daño observado.
+        {conMmi ? (
+          <>
+            MMI {sede.nivel}: {SIGNIFICADO_MMI[sede.nivel] ?? "sin descripción"}.
+            Es la sacudida que estima el modelo del USGS, no daño observado.
+          </>
+        ) : (
+          <>
+            Esta sede queda fuera de la grilla del ShakeMap del USGS, que cubre
+            de latitud 1,77 a 7,9. No es que no se haya sentido el sismo: es que
+            el modelo no llega hasta aquí.
+          </>
+        )}
       </p>
+
+      {misDanos.length > 0 && (
+        <Seccion titulo="Lo que se ha reportado después del sismo">
+          {misDanos.map((d) => (
+            <Declaracion key={d.id} dano={d} />
+          ))}
+          <p className="mt-1 text-xs" style={{ color: "var(--tinta-3)" }}>
+            Ninguno de estos reportes es una inspección técnica. Dicen quién
+            afirmó qué y cuándo, que es todo lo que se sabe hoy.
+          </p>
+        </Seccion>
+      )}
 
       <Seccion titulo="Estado declarado antes del sismo">
         {sede.encuestada ? (
@@ -194,11 +246,17 @@ export default function FichaSede({ sede, reportes, onCerrar }: Props) {
       </Seccion>
 
       <Seccion titulo="Contexto">
+        {/* Las dos filas dicen dónde está la escuela y no dicen lo mismo. La
+            zona la declara el SIMAT y nunca falta. El área la calcula un modelo
+            de población sobre un kilómetro cuadrado, distingue el centro
+            poblado de la vereda dispersa y falta en una de cada seis sedes. Van
+            en este orden y con esas etiquetas para que se puedan leer sin
+            confundirlas, y el vacío se muestra como vacío. */}
+        <Dato k="zona (SIMAT)" v={NOMBRE_ZONA[sede.zona ?? ""] ?? sede.zona} />
         <Dato
-          k="área"
+          k="área (WorldPop)"
           v={NOMBRE_AREA[sede.area_class ?? ""] ?? sede.area_class}
         />
-        <Dato k="zona del SIMAT" v={sede.zona?.toLowerCase()} />
         <Dato
           k="quintil de riqueza"
           v={sede.rwi_q != null ? NOMBRE_QUINTIL[sede.rwi_q] : undefined}
@@ -250,6 +308,81 @@ export default function FichaSede({ sede, reportes, onCerrar }: Props) {
             inspección: nadie de la entidad ha ido todavía.
           </p>
         </Seccion>
+      )}
+    </div>
+  );
+}
+
+/** Una declaración sobre esta sede, con quién la hizo y sus palabras.
+ *
+ * La cita va entera y entre comillas. Un visor que afirma que una escuela se
+ * cayó tiene que poder mostrar la frase exacta y de quién es, o no está
+ * informando sino repitiendo.
+ */
+function Declaracion({ dano: d }: { dano: Dano }) {
+  const color = COLOR_FUENTE[d.fuente];
+  const deGrupo = d.alcance !== "sede" && (d.n_sedes_institucion ?? 1) > 1;
+
+  return (
+    <div
+      className="mb-2 border-l-2 pl-2.5"
+      style={{ borderColor: color }}
+    >
+      <div className="flex items-baseline gap-1.5">
+        <span className="text-xs font-semibold uppercase tracking-wide" style={{ color }}>
+          {NOMBRE_ESTADO[d.estado]}
+        </span>
+        <span className="text-[10px]" style={{ color: "var(--tinta-3)" }}>
+          {NOMBRE_FUENTE[d.fuente]}, {d.fecha}
+        </span>
+      </div>
+
+      {deGrupo ? (
+        <p className="mt-0.5 text-xs" style={{ color: "var(--tinta-2)" }}>
+          El reporte no habla de esta sede sino de{" "}
+          {d.institucion_reportada ?? "su institución"}, que tiene{" "}
+          <span className="num">{d.n_sedes_institucion}</span> sedes. Lo que se
+          afirmó es que el daño está en alguna de ellas, sin decir en cuál.
+        </p>
+      ) : d.estado === "sin_verificar" ? (
+        <p className="mt-0.5 text-xs" style={{ color: "var(--tinta-2)" }}>
+          Una persona confirmó que la fotografía corresponde a esta sede. No dice
+          nada sobre el estado del edificio.
+        </p>
+      ) : null}
+
+      {d.cita && (
+        <p className="mt-1 text-xs italic" style={{ color: "var(--tinta)" }}>
+          «{d.cita}»
+        </p>
+      )}
+      {d.quien && (
+        <p className="text-[11px]" style={{ color: "var(--tinta-2)" }}>
+          {d.quien}
+          {d.cargo ? `, ${d.cargo}` : ""}
+          {d.medio ? `. ${d.medio}` : ""}
+        </p>
+      )}
+      {d.afectacion_humana && (
+        <p className="mt-0.5 text-[11px]" style={{ color: "var(--critico)" }}>
+          {d.afectacion_humana}
+        </p>
+      )}
+      {d.impacto_ptie && (
+        <p className="mt-0.5 text-[11px]" style={{ color: "var(--tinta-3)" }}>
+          PTIES: {d.impacto_ptie}
+        </p>
+      )}
+      {d.url && !d.url_foto && (
+        <a
+          href={d.url}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-0.5 inline-block text-[11px] underline"
+          style={{ color }}
+        >
+          {d.titular ?? "ver la fuente"} ↗
+        </a>
       )}
     </div>
   );

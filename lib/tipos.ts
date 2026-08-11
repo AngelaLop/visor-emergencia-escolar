@@ -119,6 +119,105 @@ export type Reporte = {
   nota: string;
 };
 
+/** Quien afirma un dano. Los tres emisores no dicen lo mismo y por eso no
+ *  comparten simbolo.
+ *
+ *  hot      Foto ciudadana por WhatsApp, curada una por una. Confirmar
+ *           significa que alguien emparejo la foto con la sede, no que la sede
+ *           este danada.
+ *  oficial  Reporte del PTIES. Habla de instituciones, o sea de grupos de
+ *           sedes, y no de un predio.
+ *  noticia  Declaracion de una autoridad recogida por un medio. Es la unica que
+ *           hasta hoy afirma dano de una sede con nombre propio.
+ */
+export type FuenteDano = "hot" | "oficial" | "noticia";
+
+/** Los cuatro estados posibles, cerrados a proposito.
+ *
+ *  `sin_dano` no sobra: que alguien haya mirado y no haya encontrado nada es
+ *  informacion, y borrarla obligaria a volver a preguntar. `sin_verificar` es
+ *  lo que afirma una foto ciudadana confirmada, que es exactamente nada sobre
+ *  el estado del edificio.
+ */
+export type EstadoDano = "colapso" | "dano" | "sin_dano" | "sin_verificar";
+
+/** Sobre que se afirma.
+ *
+ *  Es la distincion que decide si el punto se puede leer como "esta escuela" o
+ *  como "alguna de estas". El reporte del PTIES nombra instituciones que llegan
+ *  a tener 30 sedes repartidas en 28,7 km.
+ */
+export type AlcanceDano = "sede" | "institucion" | "solo_principal"
+  | "sin_principal";
+
+/** Un dano reportado sobre una sede. Lo arma `scripts/27_danos_reportados.py`.
+ *
+ * Trae su propia coordenada en vez de buscarla en la coleccion de sedes: hay
+ * dano reportado fuera de la grilla del ShakeMap, y si dependiera del archivo
+ * de sedes ese caso no se podria dibujar.
+ */
+export type Dano = {
+  id: string;
+  /** El reporte del que sale. Varias sedes pueden compartirlo. */
+  reporte: string;
+  fuente: FuenteDano;
+  estado: EstadoDano;
+  alcance: AlcanceDano;
+  dane: string;
+  sede: string;
+  establecimiento?: string;
+  mpio: string;
+  depto: string;
+  /** Nulos cuando la sede queda fuera de la grilla del ShakeMap del USGS. Nulo
+   *  no es cero: significa que de ahi el modelo del sismo no dice nada, y por
+   *  eso esas sedes no se dibujan. */
+  mmi: number | null;
+  banda: number | null;
+  matricula: number;
+  matricula_es_de_2022?: boolean;
+  encuestada?: boolean;
+  lon: number | null;
+  lat: number | null;
+  fecha: string;
+  /** Quien lo afirma, con nombre. Sin esto el punto no se dibuja con cita. */
+  quien: string;
+  cargo?: string;
+  cita?: string;
+  medio?: string;
+  url?: string;
+  url_foto?: string;
+  titular?: string;
+  texto_reporte?: string;
+  impacto_ptie?: string;
+  afectacion_humana?: string;
+  institucion_reportada?: string;
+  /** Cuantas sedes tiene la institucion sobre la que se afirmo. */
+  n_sedes_institucion?: number;
+};
+
+/** Del mas grave al menos grave. Cuando una sede tiene varios reportes, el mapa
+ *  pinta el mas grave: un colapso no puede quedar tapado por el "sin dano" de
+ *  otra fuente. */
+export const GRAVEDAD: Record<EstadoDano, number> = {
+  colapso: 3,
+  dano: 2,
+  sin_verificar: 1,
+  sin_dano: 0,
+};
+
+export const NOMBRE_FUENTE: Record<FuenteDano, string> = {
+  hot: "Registro fotográfico HOT",
+  oficial: "Reportes oficiales",
+  noticia: "Noticias",
+};
+
+export const NOMBRE_ESTADO: Record<EstadoDano, string> = {
+  colapso: "colapso",
+  dano: "daño",
+  sin_dano: "sin daño",
+  sin_verificar: "sin verificar",
+};
+
 /** Las dos caracteristicas que el visor sabe describir de una sede. */
 export type Tab = "fisica" | "servicios";
 
@@ -170,7 +269,10 @@ export const FUENTE_MMI = {
 
 export type Filtros = {
   bandas: number[];
-  areas: string[];
+  /** Valores de `zona` del SIMAT, en mayuscula. Se llamaba `areas` y filtraba
+   *  esto mismo, que es justo la confusion que hay que evitar: `area_class` es
+   *  otra columna, de tres categorias y con 4.066 nulos. */
+  zonas: string[];
   vigencias: string[];
   pties: string[];
   /** Categorias del indice de vulnerabilidad, de 0 a 4. Ver `categoriaIvid`. */
@@ -189,7 +291,7 @@ export const FILTROS_INICIALES: Filtros = {
   // Abre en 6,0 y 6,5, que es donde el USGS situa el inicio del dano
   // estructural visible. Las bandas mas bajas quedan a un clic.
   bandas: [6.0, 6.5],
-  areas: [],
+  zonas: [],
   // Vacio es "todas", incluidas las que ya no operan. Una escuela liquidada con
   // el edificio en pie sigue importando despues de un sismo: puede ser
   // albergue o puede caerse. Lo que no puede es aportar alumnos que ya no

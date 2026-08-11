@@ -42,8 +42,16 @@ const COLUMNAS: [string, (r: RasgoSede) => string | number][] = [
   ["pisos_declarados", (r) => r.properties.pisos ?? ""],
   ["fecha_encuesta", (r) => r.properties.fecha_encuesta ?? ""],
   ["calidad_coordenada", (r) => diceCalidad(r.properties.calidad_coord)],
-  ["zona", (r) => r.properties.zona ?? ""],
-  ["area", (r) => r.properties.area_class ?? ""],
+  // Se llama `zona_simat` y no `zona` porque hasta hace poco iba al lado de otra
+  // columna, `area`, que era `area_class`, la clasificacion de tres categorias
+  // calculada sobre la grilla de poblacion de WorldPop. Las dos decian "donde
+  // esta la escuela" y ninguna decia cual era cual. `area_class` esta vacia en
+  // 4.066 de las 26.591 sedes publicadas, una de cada seis, asi que se saco del
+  // archivo: una columna con ese hueco, en una lista que se usa para repartir
+  // visitas, se lee como "no hay nada ahi" y no como "no lo sabemos". Vuelve
+  // cuando se cierre docs/10_issue_cobertura_area_class.md. Mientras tanto sigue
+  // visible en la ficha de cada sede, que si distingue el vacio.
+  ["zona_simat", (r) => r.properties.zona ?? ""],
   ["rwi", (r) => r.properties.rwi ?? ""],
   ["lon", (r) => r.geometry.coordinates[0]],
   ["lat", (r) => r.geometry.coordinates[1]],

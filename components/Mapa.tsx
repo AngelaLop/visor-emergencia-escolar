@@ -17,24 +17,28 @@
  *    debajo. Veintiseis mil pines a escala nacional son una mancha.
  *  - El pin hueco es la sede que nunca fue encuestada. Es el hallazgo del
  *    proyecto y tiene su propio canal, aparte del color.
- *  - El color de la sede no compite con el degradado: grafito por defecto y
- *    violeta para la carencia, dos tonos que no estan en la rampa de
- *    intensidad. El rojo del reporte ciudadano va sobre un pin con halo blanco,
- *    que ninguna banda tiene.
+ *  - El color de la sede no compite con el degradado: grafito por defecto,
+ *    violeta para la carencia de servicio y la rampa lila del indice de
+ *    vulnerabilidad en la vista de visitadas. Ninguno de esos tonos esta en la
+ *    rampa de intensidad.
+ *  - Los danos reportados van en tres colores, uno por emisor, y los tres con
+ *    halo blanco, que ninguna banda tiene. El color dice quien lo afirma y el
+ *    tamano cuanto afirma: son dos preguntas distintas y no se contestan con el
+ *    mismo signo. Ver COLOR_FUENTE.
  */
 
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef } from "react";
 
-import { cargaHuellas, miles } from "@/lib/datos";
-import { BANDAS } from "@/lib/tipos";
+import { cargaHuellas, miles, TONO_IVID } from "@/lib/datos";
+import { BANDAS, GRAVEDAD, NOMBRE_ESTADO, NOMBRE_FUENTE } from "@/lib/tipos";
 import type {
+  Dano,
   Evento,
   Filtros,
   MapaBase,
   RasgoSede,
-  Reporte,
   Tema,
 } from "@/lib/tipos";
 
@@ -68,6 +72,28 @@ export const BASE = { claro: "#33414d", oscuro: "#d7dee4" };
 export const CARENCIA = { claro: "#4a3aa7", oscuro: "#9085e9" };
 export const REPORTE = "#b3261e";
 
+/** Un color por emisor de reporte, no por gravedad.
+ *
+ * La rampa de intensidad ocupa medio circulo cromatico, de verde a rojo pasando
+ * por amarillo y naranja, asi que los tonos libres son pocos y hay que gastarlos
+ * con cuidado.
+ *
+ * El naranja quedo descartado aunque parezca el candidato obvio: `--sede-ignota`
+ * ya es naranja y significa "nunca fue encuestada". Y no es un choque teorico.
+ * La sede que colapso en Calima El Darien es justamente una que nadie visito
+ * nunca, asi que su ficha tendria dos naranjas al lado, uno diciendo que no se
+ * sabe nada de ella y otro diciendo que se cayo.
+ *
+ * Quedan el azul y el magenta, que no estan en ninguna banda. Los tres van con
+ * halo blanco porque sobre la mancha de intensidad cualquier tono solido se
+ * pierde.
+ */
+export const COLOR_FUENTE: Record<string, string> = {
+  hot: REPORTE,
+  oficial: "#1558a6",
+  noticia: "#b5177e",
+};
+
 /** El degradado de intensidad, de la banda mas lejana a la del epicentro. */
 export const COLOR_BANDA: Record<number, string> = {
   4.0: "#3f9e5a",
@@ -91,7 +117,8 @@ type Props = {
   bordeGrilla: unknown | null;
   evento: Evento | null;
   sedes: RasgoSede[];
-  reportes: Reporte[];
+  danos: Dano[];
+  /** Los DANE con algun reporte, para que el filtro de la lista los distinga. */
   danesConReporte: string[];
   colombia: unknown | null;
   filtros: Filtros;
@@ -99,6 +126,9 @@ type Props = {
   mapaBase: MapaBase;
   tema: Tema;
   seleccion: string | null;
+  /** La sede a la que hay que volar. El contador hace que tocar dos veces la
+   *  misma tarjeta vuelva a mover el mapa. */
+  foco: { dane: string; n: number } | null;
   onSeleccion: (dane: string | null) => void;
 };
 
@@ -119,7 +149,21 @@ export const CAPAS_INICIALES: Capas = {
   huellas: true,
 };
 
-/** El color dice lo que pregunta la pestana activa, y nada mas. */
+/** El color dice lo que pregunta la pestana activa, y nada mas.
+ *
+ * En la pestana de infraestructura el color es grafito siempre, salvo cuando se
+ * pide el indice y entonces manda la rampa de `TONO_IVID`. Las nunca visitadas
+ * van grafito y no violeta, aunque el violeta sea el tono de la carencia en el
+ * resto del visor: la rampa del indice es de la misma familia, y sus dos tramos
+ * altos, #6754c0 y #3d2c94, quedan a los lados del violeta de carencia #4a3aa7.
+ * Con eso, pasar de "visitadas" a "nunca visitadas" cambiaba de un violeta a
+ * otro y el mismo tono acababa significando "indice alto" y "nunca visitada" en
+ * la misma pestana, a un clic de distancia.
+ *
+ * No se pierde nada: la sede nunca visitada ya tiene su propio canal, que es el
+ * pin hueco de cerca y el punto casi transparente de lejos. La forma dice lo que
+ * el color deja de decir.
+ */
 function colorSede(f: Filtros, tema: Tema): string {
   if (f.tab === "servicios") {
     const falta =
@@ -127,7 +171,58 @@ function colorSede(f: Filtros, tema: Tema): string {
       (f.energia === "todas" && f.internet === "todas");
     return falta ? CARENCIA[tema] : BASE[tema];
   }
-  return f.fisica === "no_encuestadas" ? CARENCIA[tema] : BASE[tema];
+  return BASE[tema];
+}
+
+/** Si el mapa pinta cada sede con el tono de su indice de vulnerabilidad.
+ *
+ * Solo en la vista de visitadas, que es exactamente cuando la tarjeta muestra la
+ * leyenda de los cinco tramos. Fuera de ahi el punto vuelve al grafito: mientras
+ * nadie pregunte por el estado declarado, no tiene que afirmar nada. Y es
+ * tambien la unica vista donde todas las sedes en juego tienen indice.
+ */
+function pintaPorIvid(f: Filtros): boolean {
+  return f.tab === "fisica" && f.fisica === "encuestadas";
+}
+
+/** Los cortes son los mismos de `categoriaIvid`: 0, 1, 2, 3 y 4 o mas.
+ *
+ * `has` antes del `step` no sobra. El script 23 omite la propiedad cuando la
+ * sede no tiene indice, y un `step` sobre una propiedad ausente no evalua. Esas
+ * sedes se quedan en el color plano, que es lo correcto: no tener indice es no
+ * haber sido visitada, y eso no es un tramo de la rampa.
+ */
+function colorIvid(plano: string): Expr {
+  return [
+    "case",
+    ["has", "ivid"],
+    [
+      "step", ["get", "ivid"],
+      TONO_IVID[0],
+      1, TONO_IVID[1],
+      2, TONO_IVID[2],
+      3, TONO_IVID[3],
+      4, TONO_IVID[4],
+    ],
+    plano,
+  ] as Expr;
+}
+
+/** El mismo corte, pero devolviendo el nombre de la imagen del pin. */
+function pinIvid(): Expr {
+  return [
+    "case",
+    ["has", "ivid"],
+    [
+      "step", ["get", "ivid"],
+      "pin-ivid-0",
+      1, "pin-ivid-1",
+      2, "pin-ivid-2",
+      3, "pin-ivid-3",
+      4, "pin-ivid-4",
+    ],
+    "pin-lleno",
+  ] as Expr;
 }
 
 /** Dibuja el pin con gorro de grado y lo registra como imagen del mapa.
@@ -198,13 +293,14 @@ export default function Mapa({
   colombia,
   evento,
   sedes,
-  reportes,
+  danos,
   danesConReporte,
   filtros,
   capas,
   mapaBase,
   tema,
   seleccion,
+  foco,
   onSeleccion,
 }: Props) {
   const div = useRef<HTMLDivElement>(null);
@@ -214,35 +310,50 @@ export default function Mapa({
   const marcaEpicentro = useRef<maplibregl.Marker | null>(null);
   // Cambiar de tema recarga el estilo entero y con el se van todas las fuentes,
   // asi que hay que poder volver a montarlas con los datos que hubiera.
-  const datos = useRef({ contornos, bordeGrilla, colombia, sedes, reportes,
-    danesConReporte, filtros, capas, tema });
-  datos.current = { contornos, bordeGrilla, colombia, sedes, reportes,
-    danesConReporte, filtros, capas, tema };
+  const datos = useRef({ contornos, bordeGrilla, colombia, sedes,
+    danos, danesConReporte, filtros, capas, tema });
+  datos.current = { contornos, bordeGrilla, colombia, sedes,
+    danos, danesConReporte, filtros, capas, tema };
   const alClic = useRef(onSeleccion);
   alClic.current = onSeleccion;
 
-  /** Rasgos de reporte, anclados a la sede asignada y no al punto reportado. */
-  function rasgosReporte() {
-    const { reportes: rs, sedes: ss } = datos.current;
-    return rs
-      .filter((r) => r.es_escuela === "si" && r.dane_asignado)
-      .map((r) => {
-        const c = r.candidatas.find((x) => x.dane === r.dane_asignado);
-        const sede = ss.find((s) => s.properties.dane === r.dane_asignado);
-        return {
-          type: "Feature" as const,
-          properties: {
-            id: r.id,
-            dane: r.dane_asignado,
-            sede: c?.sede ?? "",
-            dist_m: c?.dist_m ?? null,
-          },
-          geometry: {
-            type: "Point" as const,
-            coordinates: sede?.geometry.coordinates ?? [r.lon, r.lat],
-          },
-        };
-      });
+  /** Un punto por sede con reporte, no uno por reporte.
+   *
+   * En Calima El Darien hablaron el alcalde y la rectora: son dos
+   * declaraciones sobre el mismo predio y dibujarlas apiladas no agrega nada y
+   * confunde el clic. Se queda la mas grave, que es la que decide el color y el
+   * tamano. La ficha si las muestra todas.
+   *
+   * La coordenada sale del propio dano y no de la coleccion de sedes, porque
+   * hay dano reportado fuera de la grilla del ShakeMap: las 30 sedes de la
+   * Normal Superior La Inmaculada, en Barbacoas, no tienen MMI y no estan en
+   * `sedes_evento.geojson`.
+   */
+  function rasgosDano() {
+    const peor = new Map<string, Dano>();
+    for (const d of datos.current.danos) {
+      const y = peor.get(d.dane);
+      if (!y || GRAVEDAD[d.estado] > GRAVEDAD[y.estado]) peor.set(d.dane, d);
+    }
+    return [...peor.values()].map((d) => ({
+      type: "Feature" as const,
+      properties: {
+        id: d.id,
+        dane: d.dane,
+        sede: d.sede,
+        mpio: d.mpio,
+        fuente: d.fuente,
+        estado: d.estado,
+        alcance: d.alcance,
+        matricula: d.matricula,
+        quien: d.quien,
+        n_sedes_institucion: d.n_sedes_institucion ?? 1,
+      },
+      geometry: {
+        type: "Point" as const,
+        coordinates: [d.lon, d.lat] as [number, number],
+      },
+    }));
   }
 
   function registraPines(m: maplibregl.Map, color: string) {
@@ -250,6 +361,24 @@ export default function Mapa({
       [string, boolean][]) {
       if (m.hasImage(nombre)) m.removeImage(nombre);
       m.addImage(nombre, creaPin(color, hueco), { pixelRatio: 2 });
+    }
+    // Un pin por fuente de reporte. La escuela con dano no lleva un punto al
+    // lado: lleva su propio icono del color de quien lo reporto. Un circulo
+    // encima del pin se perdia, porque el pin crece hacia arriba desde la
+    // coordenada y el circulo quedaba en la punta, compitiendo con los pines
+    // vecinos.
+    for (const [f, c] of Object.entries(COLOR_FUENTE)) {
+      const nombre = `pin-${f}`;
+      if (m.hasImage(nombre)) m.removeImage(nombre);
+      m.addImage(nombre, creaPin(c, false), { pixelRatio: 2 });
+    }
+    // Un pin por tramo del indice de vulnerabilidad. La leyenda de la tarjeta
+    // pinta cinco casillas de colores y el mapa tiene que pintar lo mismo, o la
+    // leyenda no es leyenda de nada.
+    for (const [c, tono] of Object.entries(TONO_IVID)) {
+      const nombre = `pin-ivid-${c}`;
+      if (m.hasImage(nombre)) m.removeImage(nombre);
+      m.addImage(nombre, creaPin(tono, false), { pixelRatio: 2 });
     }
   }
 
@@ -275,9 +404,9 @@ export default function Mapa({
       type: "geojson",
       data: { type: "FeatureCollection", features: d.sedes } as never,
     });
-    m.addSource("reportes", {
+    m.addSource("danos", {
       type: "geojson",
-      data: { type: "FeatureCollection", features: rasgosReporte() } as never,
+      data: { type: "FeatureCollection", features: rasgosDano() } as never,
     });
 
     const visible = (on: boolean): "visible" | "none" =>
@@ -397,6 +526,27 @@ export default function Mapa({
       },
     });
 
+    // El realce de la vista de visitadas, debajo del punto. Los dos tonos
+    // claros de la rampa del indice son lila palido, y a escala nacional un
+    // punto de dos pixeles en lila palido sobre la mancha de intensidad no se
+    // ve. El anillo le da un borde que no depende del tono.
+    m.addLayer({
+      id: "sedes-realce",
+      type: "circle",
+      source: "sedes",
+      maxzoom: ZOOM_PIN,
+      layout: { visibility: visible(d.capas.sedes && pintaPorIvid(d.filtros)) },
+      paint: {
+        "circle-radius": [
+          "interpolate", ["linear"], ["zoom"], 5, 3.2, 7, 4, 9, 5.4,
+        ] as never,
+        "circle-color": "rgba(0,0,0,0)",
+        "circle-stroke-color": d.tema === "claro" ? "#ffffff" : "#0b0b0b",
+        "circle-stroke-width": 1.4,
+        "circle-stroke-opacity": 0.85,
+      },
+    });
+
     // Lejos, puntos. Cerca, pines. Es el mismo dato con dos representaciones,
     // porque el simbolo que sirve para leer una escuela no sirve para leer
     // veintiseis mil.
@@ -407,12 +557,14 @@ export default function Mapa({
       maxzoom: ZOOM_PIN,
       layout: { visibility: visible(d.capas.sedes) },
       paint: {
-        // Chicos a proposito: a escala nacional son 26.584 puntos y cualquier
+        // Chicos a proposito: a escala nacional son 26.591 puntos y cualquier
         // radio mayor los funde en una mancha negra que no dice nada.
         "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 1.3, 7, 1.9, 9, 3],
-        "circle-color": color,
+        "circle-color": pintaPorIvid(d.filtros) ? colorIvid(color) : color,
         "circle-opacity": ["case", ["get", "encuestada"], 0.75, 0.18],
-        "circle-stroke-color": color,
+        "circle-stroke-color": pintaPorIvid(d.filtros)
+          ? colorIvid(color)
+          : color,
         "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 5, 0.4, 9, 0.9],
       },
     });
@@ -423,7 +575,9 @@ export default function Mapa({
       minzoom: ZOOM_PIN,
       layout: {
         visibility: visible(d.capas.sedes),
-        "icon-image": ["case", ["get", "encuestada"], "pin-lleno", "pin-hueco"],
+        "icon-image": pintaPorIvid(d.filtros)
+          ? pinIvid()
+          : ["case", ["get", "encuestada"], "pin-lleno", "pin-hueco"],
         "icon-size": ["interpolate", ["linear"], ["zoom"], 9, 0.55, 14, 0.9],
         "icon-anchor": "bottom",
         "icon-allow-overlap": true,
@@ -443,17 +597,86 @@ export default function Mapa({
       },
     });
 
+    // El color dice quien lo afirma y el tamano cuanto afirma. Son dos canales
+    // distintos a proposito: la pregunta "quien lo dijo" y la pregunta "que tan
+    // grave" no se contestan con el mismo signo.
+    const porFuente = [
+      "match", ["get", "fuente"],
+      "hot", COLOR_FUENTE.hot,
+      "oficial", COLOR_FUENTE.oficial,
+      "noticia", COLOR_FUENTE.noticia,
+      COLOR_FUENTE.hot,
+    ];
+    // De cerca, el pin del color de la fuente, encima del pin grafito de la
+    // misma sede. De lejos no caben pines y se usa el circulo, igual que las
+    // sedes. Los dos son el mismo dato con dos representaciones.
     m.addLayer({
-      id: "reportes-punto",
+      id: "danos-pin",
+      type: "symbol",
+      source: "danos",
+      minzoom: ZOOM_PIN,
+      layout: {
+        visibility: visible(d.capas.reportes),
+        "icon-image": [
+          "match", ["get", "fuente"],
+          "hot", "pin-hot",
+          "oficial", "pin-oficial",
+          "noticia", "pin-noticia",
+          "pin-hot",
+        ] as never,
+        // Un poco mas grande que el pin de la sede: es lo que hay que ver
+        // primero en la pantalla.
+        // La expresion de zoom tiene que ser la mas externa de la propiedad, asi
+        // que el tamano por estado va dentro de cada parada y no multiplicando
+        // por fuera. Envuelta en un `*`, MapLibre rechaza la propiedad entera y
+        // la capa se dibuja con el valor por defecto o no se dibuja.
+        "icon-size": [
+          "interpolate", ["linear"], ["zoom"],
+          9, ["match", ["get", "estado"], "colapso", 0.88, 0.7],
+          14, ["match", ["get", "estado"], "colapso", 1.38, 1.1],
+        ] as never,
+        "icon-anchor": "bottom",
+        "icon-allow-overlap": true,
+      },
+    });
+
+    m.addLayer({
+      id: "danos-punto",
       type: "circle",
-      source: "reportes",
+      source: "danos",
+      maxzoom: ZOOM_PIN,
       layout: { visibility: visible(d.capas.reportes) },
       paint: {
-        "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 6, 14, 11],
-        "circle-color": REPORTE,
+        "circle-radius": [
+          "interpolate", ["linear"], ["zoom"],
+          5, ["match", ["get", "estado"], "colapso", 8.1, 6],
+          14, ["match", ["get", "estado"], "colapso", 14.9, 11],
+        ] as never,
+        "circle-color": porFuente as never,
         "circle-opacity": 0.95,
         "circle-stroke-color": "#ffffff",
         "circle-stroke-width": 2.5,
+      },
+    });
+
+    // El anillo de la sede abierta, del color de su fuente y no del negro de la
+    // seleccion normal. Al llegar volando hasta aqui, lo primero que hay que
+    // reconocer es de quien es el reporte, y el color es lo que lo dice.
+    m.addLayer({
+      id: "danos-seleccion",
+      type: "circle",
+      source: "danos",
+      filter: ["==", ["get", "dane"], seleccion ?? ""],
+      paint: {
+        "circle-radius": [
+          "interpolate", ["linear"], ["zoom"],
+          5, ["match", ["get", "estado"], "colapso", 14.9, 11],
+          14, ["match", ["get", "estado"], "colapso", 24.3, 18],
+        ] as never,
+        "circle-color": "rgba(0,0,0,0)",
+        "circle-stroke-color": porFuente as never,
+        "circle-stroke-width": 2.5,
+        "circle-stroke-opacity": 0.9,
       },
     });
 
@@ -473,7 +696,7 @@ export default function Mapa({
       new maplibregl.NavigationControl({ showCompass: false }),
       "bottom-right",
     );
-    m.addControl(new ControlInicio(), "bottom-right");
+    m.addControl(new ControlInicio(() => alClic.current(null)), "bottom-right");
     m.addControl(
       new maplibregl.ScaleControl({ maxWidth: 120, unit: "metric" }),
       "bottom-right",
@@ -489,7 +712,7 @@ export default function Mapa({
     m.on("load", () => {
       montaCapas(m);
 
-      const capasClic = ["sedes-pin", "sedes-punto", "reportes-punto"];
+      const capasClic = ["danos-pin", "danos-punto", "sedes-pin", "sedes-punto"];
       for (const capa of capasClic) {
         m.on("mouseenter", capa, () => (m.getCanvas().style.cursor = "pointer"));
         m.on("mouseleave", capa, () => {
@@ -501,13 +724,15 @@ export default function Mapa({
           if (!f) return;
           const p = f.properties as Record<string, unknown>;
           const html =
-            capa === "reportes-punto"
-              ? `<strong>Reporte ciudadano</strong><br>${p.sede}<br>Reportado a ${p.dist_m} m de la sede`
+            capa.startsWith("danos-")
+              ? textoDano(p)
               : `<strong>${p.sede}</strong><br>${p.mpio}, ${p.depto}<br>` +
                 `<span class="num">${miles(
                   Number(p.matricula_2024 ?? p.matricula),
                 )}</span> estudiantes, ` +
-                `intensidad MMI ${Number(p.mmi).toFixed(1).replace(".", ",")}<br>` +
+                // Dos decimales: con uno, un 6,49 se leia "6,5", que es el
+                // nombre de la banda de arriba, y la mancha decia 6,0.
+                `intensidad MMI ${Number(p.mmi).toFixed(2).replace(".", ",")}<br>` +
                 (p.encuestada === true || p.encuestada === "true"
                   ? "Encuestada por el FFIE"
                   : "<em>Nunca fue encuestada</em>");
@@ -619,20 +844,43 @@ export default function Mapa({
 
   useEffect(() => {
     cuandoListo((m) => {
-      const f = m.getSource("reportes") as maplibregl.GeoJSONSource | undefined;
+      const f = m.getSource("danos") as maplibregl.GeoJSONSource | undefined;
       if (f) {
-        f.setData({ type: "FeatureCollection", features: rasgosReporte() } as never);
+        f.setData({ type: "FeatureCollection", features: rasgosDano() } as never);
       }
     });
-  }, [reportes, sedes]);
+    // `danos` ya llega recortado por la selección, así que cambiar cualquier
+    // filtro cambia este arreglo y vuelve a dibujar. No hace falta escuchar los
+    // filtros aquí, y no hacerlo evita que esta capa y la de sedes puedan
+    // quedar contando cosas distintas.
+  }, [danos]);
 
   useEffect(() => {
     cuandoListo((m) => {
       if (!m.getLayer("sedes-punto")) return;
       const color = colorSede(filtros, tema);
       registraPines(m, color);
-      m.setPaintProperty("sedes-punto", "circle-color", color);
-      m.setPaintProperty("sedes-punto", "circle-stroke-color", color);
+      const porIvid = pintaPorIvid(filtros);
+      const tono = porIvid ? colorIvid(color) : color;
+      m.setPaintProperty("sedes-punto", "circle-color", tono);
+      m.setPaintProperty("sedes-punto", "circle-stroke-color", tono);
+      m.setLayoutProperty(
+        "sedes-pin",
+        "icon-image",
+        porIvid
+          ? pinIvid()
+          : (["case", ["get", "encuestada"], "pin-lleno", "pin-hueco"] as Expr),
+      );
+      m.setPaintProperty(
+        "sedes-realce",
+        "circle-stroke-color",
+        tema === "claro" ? "#ffffff" : "#0b0b0b",
+      );
+      m.setLayoutProperty(
+        "sedes-realce",
+        "visibility",
+        capas.sedes && porIvid ? "visible" : "none",
+      );
       m.setLayoutProperty(
         "sedes-coord",
         "visibility",
@@ -658,7 +906,9 @@ export default function Mapa({
       ver("borde-grilla", capas.intensidad && seCortaEnElBorde(filtros.bandas));
       ver("sedes-punto", capas.sedes);
       ver("sedes-pin", capas.sedes);
-      ver("reportes-punto", capas.reportes);
+      ver("sedes-realce", capas.sedes && pintaPorIvid(filtros));
+      ver("danos-punto", capas.reportes);
+      ver("danos-pin", capas.reportes);
       ver("huellas-relleno", capas.huellas);
       ver("huellas-linea", capas.huellas);
     });
@@ -668,8 +918,39 @@ export default function Mapa({
     cuandoListo((m) => {
       if (!m.getLayer("sedes-seleccion")) return;
       m.setFilter("sedes-seleccion", ["==", ["get", "dane"], seleccion ?? ""]);
+      m.setFilter("danos-seleccion", ["==", ["get", "dane"], seleccion ?? ""]);
     });
   }, [seleccion]);
+
+  /** Vuela hasta la sede que se abrió, se haya tocado en la lista o en el mapa.
+   *
+   * La coordenada se busca primero en el daño y solo después en la colección de
+   * sedes. Da igual cuál de las dos tenga el punto: lo que importa es que si la
+   * sede sigue seleccionada, alguna de las dos lo tiene.
+   *
+   * Se acerca a zoom 16, que es donde ya cargan las huellas de edificio, para
+   * que al llegar se vea el predio y no una mancha. Si el mapa ya está más
+   * cerca, no se aleja: acercarse siempre a 16 alejaría a quien ya estaba
+   * mirando un tejado.
+   */
+  useEffect(() => {
+    if (!foco) return;
+    cuandoListo((m) => {
+      const d = datos.current.danos.find(
+        (x) => x.dane === foco.dane && x.lon != null && x.lat != null,
+      );
+      const s = datos.current.sedes.find(
+        (x) => x.properties.dane === foco.dane,
+      );
+      const centro = d
+        ? ([d.lon, d.lat] as [number, number])
+        : s
+          ? (s.geometry.coordinates as [number, number])
+          : null;
+      if (!centro) return;
+      m.flyTo({ center: centro, zoom: Math.max(m.getZoom(), 16), speed: 1.2 });
+    });
+  }, [foco]);
 
   return <div ref={div} className="h-full w-full" />;
 }
@@ -679,6 +960,12 @@ export default function Mapa({
 class ControlInicio implements maplibregl.IControl {
   private div!: HTMLDivElement;
 
+  /** @param alVolver cierra la ficha. Devolver el encuadre y dejar la ficha
+   *  abierta era media vuelta: la sede seguía seleccionada y su anillo quedaba
+   *  perdido en la mancha a escala de país. Lo que no se toca son los filtros,
+   *  que pueden ser quince minutos de trabajo y no se pierden por un clic. */
+  constructor(private alVolver: () => void) {}
+
   onAdd(m: maplibregl.Map) {
     this.div = document.createElement("div");
     // La clase propia permite dejarlo visible en el telefono cuando se
@@ -686,13 +973,16 @@ class ControlInicio implements maplibregl.IControl {
     this.div.className = "maplibregl-ctrl maplibregl-ctrl-group ctrl-inicio";
     const b = document.createElement("button");
     b.type = "button";
-    b.title = "Volver a la vista inicial";
-    b.setAttribute("aria-label", "Volver a la vista inicial");
+    b.title = "Volver a la vista inicial y cerrar la ficha";
+    b.setAttribute("aria-label", "Volver a la vista inicial y cerrar la ficha");
     b.innerHTML =
       "<svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" style=\"margin:auto;display:block\">" +
       "<path d=\"M2 7.2 8 2l6 5.2V14H10v-4H6v4H2V7.2Z\" fill=\"none\" " +
       "stroke=\"#333\" stroke-width=\"1.4\" stroke-linejoin=\"round\"/></svg>";
-    b.onclick = () => m.easeTo({ ...VISTA_INICIAL, duration: 600 });
+    b.onclick = () => {
+      m.easeTo({ ...VISTA_INICIAL, duration: 600 });
+      this.alVolver();
+    };
     this.div.appendChild(b);
     return this.div;
   }
@@ -712,6 +1002,31 @@ function filtroBandas(bandas: number[]): Expr {
  * USGS. Con las demas, el rectangulo punteado no explica ningun corte. */
 function seCortaEnElBorde(bandas: number[]): boolean {
   return bandas.includes(4.0) || bandas.includes(4.5);
+}
+
+/** El globo de un punto de daño.
+ *
+ * Dice tres cosas y en este orden: qué se afirma, sobre qué se afirma y quién lo
+ * afirma. La segunda es la que evita el malentendido caro: cuando el reporte
+ * habla de la institución, el globo dice en cuántas sedes puede estar el daño en
+ * vez de dejar creer que está en esta.
+ */
+function textoDano(p: Record<string, unknown>): string {
+  const fuente = NOMBRE_FUENTE[p.fuente as keyof typeof NOMBRE_FUENTE] ?? "";
+  const estado = NOMBRE_ESTADO[p.estado as keyof typeof NOMBRE_ESTADO] ?? "";
+  const n = Number(p.n_sedes_institucion ?? 1);
+  const deGrupo = p.alcance !== "sede" && n > 1;
+  const alcance = deGrupo
+    ? `<em>El reporte habla de la institución, no de esta sede. El daño puede estar en cualquiera de sus ${n}.</em>`
+    : p.estado === "sin_verificar"
+      ? "<em>Alguien emparejó una foto con esta sede. No afirma daño.</em>"
+      : "<em>La afirmación es sobre esta sede.</em>";
+  return (
+    `<strong>${p.sede}</strong><br>${p.mpio}<br>` +
+    `${fuente}: <strong>${estado}</strong><br>` +
+    `<span class="num">${miles(Number(p.matricula))}</span> estudiantes<br>` +
+    alcance
+  );
 }
 
 export { BANDAS };
