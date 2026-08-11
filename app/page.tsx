@@ -232,15 +232,18 @@ export default function Pagina() {
         encuestadasPais={ENCUESTADAS_PAIS}
       />
 
-      <div className="pointer-events-none absolute inset-x-2 top-2 z-20 flex flex-col items-stretch gap-2 md:inset-x-auto md:inset-y-0 md:right-0 md:top-auto md:items-end md:overflow-y-auto md:p-3 md:pb-16">
+      <div className="pointer-events-none absolute inset-x-2 top-2 z-20 flex flex-col items-stretch gap-2 md:inset-x-auto md:right-0 md:top-0 md:bottom-0 md:items-end md:p-3 md:pb-16">
         <ControlDerecho
           resumen={resumen}
           mapaBase={mapaBase}
           onMapaBase={setMapaBase}
           onExportar={() => descarga(seleccionadas)}
         />
+        {/* La ficha se desplaza sola. Si este contenedor tambien se desplazara,
+            el encabezado pegajoso con el boton de cerrar se iria por arriba y
+            quedaria fuera de la pantalla. */}
         {sedeAbierta && (
-          <div className="pointer-events-auto max-h-[70svh] overflow-y-auto md:max-h-none md:overflow-visible">
+          <div className="pointer-events-auto min-h-0">
             <FichaSede
               sede={sedeAbierta}
               reportes={reportes}

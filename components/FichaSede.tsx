@@ -14,6 +14,8 @@
  * casillas vacías son detalles, y son el hallazgo.
  */
 
+import { useEffect } from "react";
+
 import Imagen from "@/components/Imagen";
 import {
   CALIDAD_COORD,
@@ -31,6 +33,16 @@ type Props = {
 };
 
 export default function FichaSede({ sede, reportes, onCerrar }: Props) {
+  // Escape cierra. En el telefono la ficha tapa el mapa, asi que el boton de
+  // cerrar no puede ser la unica salida.
+  useEffect(() => {
+    const tecla = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCerrar();
+    };
+    window.addEventListener("keydown", tecla);
+    return () => window.removeEventListener("keydown", tecla);
+  }, [onCerrar]);
+
   const verificada = sede.calidad_coord === "gps_validated";
   const mios = reportes.filter(
     (r) => r.es_escuela === "si" && r.dane_asignado === sede.dane,
@@ -38,7 +50,7 @@ export default function FichaSede({ sede, reportes, onCerrar }: Props) {
 
   return (
     <div
-      className="pointer-events-auto flex max-h-full w-full flex-col overflow-y-auto rounded border shadow-lg md:w-[360px]"
+      className="pointer-events-auto flex max-h-[70svh] w-full flex-col overflow-y-auto overscroll-contain rounded border shadow-lg md:max-h-[calc(100svh-9rem)] md:w-[360px]"
       style={{
         background: "var(--superficie)",
         borderColor: "var(--borde)",
@@ -63,9 +75,10 @@ export default function FichaSede({ sede, reportes, onCerrar }: Props) {
         </div>
         <button
           onClick={onCerrar}
-          aria-label="cerrar"
-          className="rounded px-2 py-0.5 text-lg leading-none"
-          style={{ color: "var(--tinta-3)" }}
+          aria-label="Cerrar la ficha"
+          title="Cerrar (Esc)"
+          className="-mr-1 shrink-0 rounded-full border px-2 py-0.5 text-base leading-tight"
+          style={{ borderColor: "var(--linea)", color: "var(--tinta-2)" }}
         >
           ×
         </button>
