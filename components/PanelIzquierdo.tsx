@@ -54,7 +54,11 @@ export default function PanelIzquierdo(p: Props) {
         "pointer-events-none z-10 flex flex-col gap-2 overflow-y-auto " +
         "fixed inset-x-0 bottom-0 px-2 pb-2 " +
         (hojaAbierta ? "max-h-[75svh] " : "max-h-[38svh] ") +
-        "md:absolute md:inset-y-0 md:bottom-auto md:left-0 md:right-auto " +
+        // `inset-y-0` fija arriba y abajo, y eso es lo que acota la columna a
+        // la altura de la pantalla para que se desplace por dentro. Sin el
+        // borde inferior crecia hacia abajo y el que terminaba desplazandose
+        // era el documento entero.
+        "md:absolute md:inset-y-0 md:left-0 md:right-auto " +
         "md:max-h-none md:w-[360px] md:p-3 md:pb-10"
       }
     >

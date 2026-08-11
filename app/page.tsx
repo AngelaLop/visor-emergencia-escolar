@@ -275,8 +275,11 @@ export default function Pagina() {
         />
       </div>
 
+      {/* Arranca donde termina la columna de tarjetas (360 px mas su margen).
+          Anclada al borde de la pantalla, quedaba atravesada sobre las tarjetas
+          en cuanto una se desplegaba. Nada del mapa va debajo del panel. */}
       <div
-        className="absolute bottom-2 left-3 z-10 hidden rounded px-2 py-1 text-[10px] shadow md:block"
+        className="absolute bottom-2 left-[372px] z-10 mr-3 hidden max-w-[calc(100%-390px)] rounded px-2 py-1 text-[10px] shadow md:block"
         style={{ background: "var(--superficie)", color: "var(--tinta-3)" }}
       >
         El MMI es la sacudida que estima el USGS, no daño observado. Ninguna
