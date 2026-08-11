@@ -51,9 +51,18 @@ export default function PanelIzquierdo(p: Props) {
   return (
     <div
       className={
-        "pointer-events-none z-10 flex flex-col gap-2 overflow-y-auto " +
-        "fixed inset-x-0 bottom-0 px-2 pb-2 " +
-        (hojaAbierta ? "max-h-[75svh] " : "max-h-[38svh] ") +
+        // `pointer-events-none` solo desde `md`. En el telefono esta hoja es lo
+        // que hay que poder arrastrar, y un contenedor que desplaza pero no
+        // recibe punteros no se deja recorrer con el dedo en WebKit: el gesto
+        // no encuentra a quien moverse. En escritorio si hace falta, porque la
+        // columna de 360 px ocupa toda la altura y por debajo de las tarjetas
+        // tiene que poder hacerse clic en el mapa.
+        "pointer-events-auto overscroll-contain md:pointer-events-none " +
+        "z-10 flex flex-col gap-2 overflow-y-auto " +
+        // El relleno inferior deja pasar la escala y la atribucion del mapa,
+        // que van fijas abajo y se comian la ultima tarjeta.
+        "fixed inset-x-0 bottom-0 px-2 pb-8 " +
+        (hojaAbierta ? "max-h-[88svh] " : "max-h-[38svh] ") +
         // `inset-y-0` fija arriba y abajo, y eso es lo que acota la columna a
         // la altura de la pantalla para que se desplace por dentro. Sin el
         // borde inferior crecia hacia abajo y el que terminaba desplazandose
@@ -62,19 +71,28 @@ export default function PanelIzquierdo(p: Props) {
         "md:max-h-none md:w-[360px] md:p-3 md:pb-10"
       }
     >
+      {/* El asa ocupa todo el ancho y es opaca. Como pastilla estrecha se
+          quedaba flotando sobre el texto de la tarjeta que pasaba por debajo,
+          y tapaba palabras sueltas en mitad de un parrafo. Ahora es el borde
+          superior de la hoja: lo que se desplaza desaparece detras de ella,
+          que es como se comporta cualquier hoja que sube desde abajo. */}
       <button
         onClick={() => setHojaAbierta(!hojaAbierta)}
         aria-label={hojaAbierta ? "Recoger el panel" : "Desplegar el panel"}
-        className="pointer-events-auto sticky top-0 z-20 mx-auto flex h-6 w-24 shrink-0 items-center justify-center rounded-full md:hidden"
-        style={{
-          background: "var(--superficie)",
-          boxShadow: "0 1px 4px rgba(0,0,0,.2)",
-        }}
+        className="pointer-events-auto sticky top-0 z-20 -mx-2 flex h-7 shrink-0 items-center justify-center px-2 md:hidden"
       >
         <span
-          className="block h-1 w-10 rounded-full"
-          style={{ background: "var(--tinta-3)" }}
-        />
+          className="flex h-full w-full items-center justify-center rounded-t-lg"
+          style={{
+            background: "var(--superficie)",
+            boxShadow: "0 -1px 4px rgba(0,0,0,.15)",
+          }}
+        >
+          <span
+            className="block h-1 w-10 rounded-full"
+            style={{ background: "var(--tinta-3)" }}
+          />
+        </span>
       </button>
 
       <div className="pointer-events-auto flex flex-col gap-2">
@@ -96,6 +114,10 @@ function TarjetaEvento({ evento }: Props) {
         <div className="flex-1">
           <h1 className="text-sm font-semibold tracking-wide">
             VISOR ESCOLAR DE EMERGENCIA
+            <Info
+              texto="Ubica las sedes educativas oficiales de Colombia sobre la intensidad que el sismo del 10 de agosto de 2026 alcanzó en cada punto. Encima marca los reportes de daño que la ciudadanía manda por ChatMap de HOT y que ya pasaron por revisión humana. Y de cada sede muestra cómo estaba su infraestructura antes del sismo, según la encuesta del FFIE y el registro C-600 del DANE. Ninguna sede de esta pantalla ha sido inspeccionada."
+              tono="var(--cima)"
+            />
           </h1>
           <p className="text-xs" style={{ color: "var(--tinta-3)" }}>
             Sedes educativas oficiales de{" "}
@@ -106,10 +128,12 @@ function TarjetaEvento({ evento }: Props) {
             style={{ color: "var(--tinta-3)" }}
           >
             <a
-              href="https://github.com/AngelaLop/school_infrastructure"
+              // El repositorio del analisis es privado y a un visitante le
+              // devuelve un 404. Este es el codigo de lo que esta mirando.
+              href="https://github.com/AngelaLop/visor-emergencia-escolar"
               target="_blank"
               rel="noreferrer"
-              title="Código del proyecto en GitHub"
+              title="Código del visor en GitHub"
               className="inline-flex"
               style={{ color: "inherit" }}
             >
@@ -220,6 +244,21 @@ function TarjetaDanos({ capas, onCapas, reportes, onIrASede }: Props) {
             de sedes educativas. Aparecer aquí significa que una persona verificó
             que la fotografía corresponde a esa sede, no que la sede esté dañada.
           </p>
+
+          {/* El canal de reporte es el de HOT, no uno propio. Duplicarlo daria
+              una segunda cola que nadie revisa. El enlace va aqui y no en el
+              encabezado porque quien acaba de leer de donde salen estos puntos
+              es quien puede aportar el siguiente. */}
+          <a
+            href="https://chatmap.hotosm.org/"
+            target="_blank"
+            rel="noreferrer"
+            className="mb-3 flex items-center justify-center gap-2 rounded border px-3 py-2 text-xs font-medium"
+            style={{ borderColor: "var(--cima)", color: "var(--cima)" }}
+          >
+            Reportar daños en IE
+            <span aria-hidden="true">↗</span>
+          </a>
 
           {confirmados.length > 0 ? (
             <>
@@ -371,7 +410,7 @@ function TarjetaCapas({
       {abierta && (
         <div className="pb-2">
           <FilaCapa
-            nombre="Intensidad"
+            nombre="Intensidad del sismo"
             ayuda={EXPLICACION_MMI}
             fuente={FUENTE_MMI}
             activa={capas.intensidad}
@@ -596,7 +635,11 @@ function TarjetaCaracteristicas({
       : filtros.energia !== "todas" || filtros.internet !== "todas";
 
   return (
-    <Tarjeta>
+    // El acento de esta tarjeta es el turquesa de CIMA y no el azul del resto.
+    // Se redefine la variable aqui en vez de tocar `Opcion` y las pestañas,
+    // porque esos mismos componentes los usa la tarjeta de capas, que sigue en
+    // azul. Una variable heredada cambia todo lo de dentro y nada de fuera.
+    <Tarjeta estilo={{ "--acento": "var(--cima)" } as React.CSSProperties}>
       <Encabezado
         titulo="Características de las IE antes del sismo"
         abierta={abierta}
@@ -808,11 +851,23 @@ function TarjetaCaracteristicas({
 
 // ------------------------------------------------------------- piezas --
 
-function Tarjeta({ children }: { children: React.ReactNode }) {
+function Tarjeta({
+  children,
+  estilo,
+}: {
+  children: React.ReactNode;
+  /** Permite redefinir variables de color para una tarjeta sola. Se usa para
+   *  cambiar el acento sin tocar el de las demas, que comparten componentes. */
+  estilo?: React.CSSProperties;
+}) {
   return (
     <section
       className="rounded-lg border shadow-md"
-      style={{ background: "var(--superficie)", borderColor: "var(--borde)" }}
+      style={{
+        background: "var(--superficie)",
+        borderColor: "var(--borde)",
+        ...estilo,
+      }}
     >
       {children}
     </section>
@@ -1127,9 +1182,13 @@ function Mini({ n, matricula, texto }: { n: number; matricula: number; texto: st
 function Info({
   texto,
   fuente,
+  tono,
 }: {
   texto: string;
   fuente?: { texto: string; url: string };
+  /** Color del boton. Por defecto es el gris de nota al pie. Solo lo cambia el
+   *  boton del titulo, que no explica un dato sino la plataforma entera. */
+  tono?: string;
 }) {
   // Dos estados y no uno: el clic deja la nota fija y el puntero solo la asoma.
   // Con una sola bandera, mover el mouse encima para hacer clic la abría y el
@@ -1160,7 +1219,10 @@ function Info({
         }}
         aria-label="Qué significa esto"
         className="rounded-full border px-1.5 text-[9px] leading-4"
-        style={{ borderColor: "var(--linea)", color: "var(--tinta-3)" }}
+        style={{
+          borderColor: tono ?? "var(--linea)",
+          color: tono ?? "var(--tinta-3)",
+        }}
       >
         i
       </button>

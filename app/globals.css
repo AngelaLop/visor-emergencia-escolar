@@ -23,6 +23,11 @@
   --critico: #d03b3b;
   /* El color del control activo, como el verde de EduAccess. */
   --acento: #1c5cab;
+  /* El turquesa del logo de CIMA, muestreado del propio archivo
+     `public/logos/cima.png`: es el color de 35.459 de sus pixeles opacos. Se
+     usa solo para marcar lo que explica la plataforma entera, no un dato del
+     mapa, asi que no compite con ninguna categoria. */
+  --cima: #60bfb9;
   --sede-base: #33414d;
 
   /* Las bandas de intensidad tal como se ven ya compuestas sobre el mapa base,
