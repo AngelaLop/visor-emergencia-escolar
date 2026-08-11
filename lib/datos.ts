@@ -89,7 +89,7 @@ export function pasa(s: Sede, f: Filtros): boolean {
   if (f.secretarias.length && !f.secretarias.includes(s.secretaria ?? "")) {
     return false;
   }
-  if (f.areas.length && !f.areas.includes(s.area_class ?? "sin dato")) {
+  if (f.areas.length && !f.areas.includes(s.zona ?? "")) {
     return false;
   }
 
@@ -230,10 +230,11 @@ export const NOMBRE_QUINTIL: Record<number, string> = {
   5: "Q5 (más rico)",
 };
 
+/** Las claves son los valores de `zona` del SIMAT, que vienen en mayuscula. Se
+ *  muestran en minuscula porque son etiquetas de un boton, no un codigo. */
 export const NOMBRE_AREA: Record<string, string> = {
-  urbana: "urbana",
-  no_urbana: "centro poblado",
-  dispersa: "rural dispersa",
+  URBANA: "urbana",
+  RURAL: "rural",
 };
 
 export function miles(n: number): string {

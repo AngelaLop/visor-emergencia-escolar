@@ -168,10 +168,15 @@ export default function Pagina() {
       .map(([s]) => s);
   }, [coleccion, evento]);
 
+  // El area sale de `zona`, la binaria del SIMAT, y no de `area_class`. La
+  // clasificacion de tres categorias se calcula sobre una grilla de poblacion
+  // de 1 km y falta en 4.066 de estas sedes, asi que el filtro mostraba una
+  // opcion "sin dato" con una de cada seis escuelas dentro. `zona` no tiene un
+  // solo nulo. Lo que se pierde es distinguir centro poblado de vereda
+  // dispersa; ver el issue de cobertura de area_class en docs/.
   const areas = useMemo(() => {
-    const v = new Set(
-      coleccion?.features.map((f) => f.properties.area_class ?? "sin dato") ?? [],
-    );
+    const v = new Set(coleccion?.features.map((f) => f.properties.zona ?? "") ?? []);
+    v.delete("");
     return Array.from(v).sort();
   }, [coleccion]);
 
