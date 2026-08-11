@@ -542,10 +542,10 @@ function TarjetaCapas({
                   </Chips>
                 </div>
 
-                <Etiqueta>
-                  Vigencia de la sede
+                <Etiqueta oracion>
+                  <span className="text-[11px]">Vigencia de la sede</span>
                   <Info
-                    texto="El marco de sedes es el SIMAT de 2022 y ya tiene cuatro años. El C-600 de 2024 declara la novedad de cada sede, y ahí se ve cuáles se liquidaron, se fusionaron, quedaron duplicadas o inactivas. Aparecen todas por defecto: una escuela cerrada con el edificio en pie sigue importando después de un sismo. Lo que no aporta son alumnos, y de eso se encarga la matrícula de 2024. Que una sede no haya reportado no significa que haya cerrado."
+                    texto="El marco de sedes es el SIMAT de 2022 y ya tiene cuatro años. El C-600 de 2024 declara la novedad de cada sede, y ahí se ve cuáles se liquidaron, se fusionaron, quedaron duplicadas o inactivas. Aparecen todas por defecto: una escuela cerrada con el edificio en pie sigue importando después de un sismo. Lo que ya no aporta es matrícula, y de eso se encarga el dato de 2024. Que una sede no haya reportado no significa que haya cerrado."
                   />
                 </Etiqueta>
                 <div className="mb-3">
@@ -981,10 +981,21 @@ function FilaCapa({
   );
 }
 
-function Etiqueta({ children }: { children: React.ReactNode }) {
+function Etiqueta({
+  children,
+  oracion,
+}: {
+  children: React.ReactNode;
+  /** Deja el rotulo tal cual se escribio, sin volverlo versalita. Las etiquetas
+   *  de una o dos palabras se leen bien en mayuscula; una frase entera, no. */
+  oracion?: boolean;
+}) {
   return (
     <div
-      className="mb-1 text-[10px] font-medium uppercase tracking-wide"
+      className={
+        "mb-1 text-[10px] font-medium tracking-wide" +
+        (oracion ? "" : " uppercase")
+      }
       style={{ color: "var(--tinta-3)" }}
     >
       {children}
