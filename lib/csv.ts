@@ -20,7 +20,11 @@ const COLUMNAS: [string, (r: RasgoSede) => string | number][] = [
   ["departamento", (r) => r.properties.depto],
   ["municipio", (r) => r.properties.mpio],
   ["secretaria", (r) => r.properties.secretaria ?? ""],
-  ["matricula", (r) => r.properties.matricula],
+  ["matricula_simat_2022", (r) => r.properties.matricula],
+  // Vacio y no cero cuando la sede no reporto al C-600 de 2024. Quien abra el
+  // CSV tiene que poder distinguir "no reporto" de "se quedo sin alumnos".
+  ["matricula_c600_2024", (r) => r.properties.matricula_2024 ?? ""],
+  ["vigencia_2024", (r) => r.properties.vigencia_2024 ?? ""],
   ["mmi", (r) => r.properties.mmi],
   ["nivel_mmi", (r) => r.properties.nivel],
   ["encuestada", (r) => (r.properties.encuestada ? "si" : "no")],

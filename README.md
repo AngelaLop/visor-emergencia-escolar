@@ -4,11 +4,8 @@ Responde una sola pregunta: a dónde mandar a alguien a mirar primero después d
 un evento. El caso es el sismo M 7.4 del Chocó del 10 de agosto de 2026, que dejó
 13.090 sedes educativas oficiales en MMI V o más.
 
-> Este repositorio es solo la aplicación. Los datos que consume salen del
-> repositorio de análisis, [AngelaLop/school_infrastructure](https://github.com/AngelaLop/school_infrastructure),
-> donde viven la base maestra de las 52.823 sedes, la exposición al sismo y los
-> scripts que producen `public/datos/`. Ahí también está
-> `docs/09_plan_visor_emergencia.md`, con el plan y las razones de cada decisión.
+El plan y las razones de cada decisión están en `docs/09_plan_visor_emergencia.md`.
+Esto es solo cómo se corre.
 
 ## Correrlo
 
@@ -98,6 +95,33 @@ y en ese borde el MMI todavía vale 4,8. La sacudida no se acaba ahí: se acaba 
 archivo. Por eso las bandas de 4,0 y 4,5 se cortan contra una recta, y por eso
 esa recta se dibuja punteada y solo aparece cuando alguna de esas dos bandas está
 encendida.
+
+## La edad del marco
+
+El universo de sedes es el SIMAT oficial de 2022 y ya tiene cuatro años. En ese
+tiempo hay escuelas que se liquidaron, se fusionaron o quedaron inactivas.
+Contarlas con su matrícula de 2022 infla cualquier cifra de personas expuestas.
+
+El C-600 de 2024 lo corrige sin necesidad de un marco nuevo: cubre 52.700 de las
+52.823 sedes y declara la novedad de cada una. De ahí salen dos columnas,
+`vigencia_2024` y `matricula_2024`.
+
+De las 13.090 sedes en MMI V o más, 426 ya no operaban en 2024: 263 inactivas,
+150 liquidadas, 11 duplicadas y 2 fusionadas.
+
+El conteo de estudiantes usa la matrícula de 2024 y cae a la de 2022 solo cuando
+la sede no reportó ese año, porque no reportar no es quedarse sin alumnos. El
+número de la esquina dice en su título cuántas sedes de la selección están en ese
+caso. En la vista que abre por defecto, la matrícula pasa de 961.350 a 915.886.
+
+Ninguna sede se elimina del mapa por no operar. Después de un sismo, una escuela
+cerrada con el edificio en pie sigue importando: puede ser albergue o puede
+caerse. La vigencia es un filtro en "más filtros", no un recorte silencioso.
+
+Lo que el C-600 no puede arreglar es el marco al revés: hay 1.617 sedes oficiales
+en el C-600 de 2024 que no existen en el SIMAT de 2022, y 891 de ellas rinden
+normalmente. Eso exige un SIMAT más reciente y está levantado en
+`docs/10_issue_cobertura_area_class.md`.
 
 ## Reportes ciudadanos
 

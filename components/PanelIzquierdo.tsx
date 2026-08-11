@@ -19,7 +19,13 @@ import { useRef, useState } from "react";
 import { MarcaGitHub } from "@/components/Iconos";
 import { COLOR_BANDA, REPORTE, svgEpicentro } from "@/components/Mapa";
 import type { Capas } from "@/components/Mapa";
-import { NOMBRE_AREA, NOMBRE_QUINTIL, horaLocal, miles } from "@/lib/datos";
+import {
+  NOMBRE_AREA,
+  NOMBRE_QUINTIL,
+  NOMBRE_VIGENCIA,
+  horaLocal,
+  miles,
+} from "@/lib/datos";
 import type { Resumen } from "@/lib/datos";
 import { BANDAS, EXPLICACION_MMI, FUENTE_MMI } from "@/lib/tipos";
 import type { Evento, Filtros, Reporte, Tema } from "@/lib/tipos";
@@ -531,6 +537,28 @@ function TarjetaCapas({
                         onClick={() => set({ areas: alternaLista(filtros.areas, a) })}
                       >
                         {NOMBRE_AREA[a] ?? a}
+                      </Opcion>
+                    ))}
+                  </Chips>
+                </div>
+
+                <Etiqueta>
+                  Vigencia de la sede
+                  <Info
+                    texto="El marco de sedes es el SIMAT de 2022 y ya tiene cuatro años. El C-600 de 2024 declara la novedad de cada sede, y ahí se ve cuáles se liquidaron, se fusionaron, quedaron duplicadas o inactivas. Aparecen todas por defecto: una escuela cerrada con el edificio en pie sigue importando después de un sismo. Lo que no aporta son alumnos, y de eso se encarga la matrícula de 2024. Que una sede no haya reportado no significa que haya cerrado."
+                  />
+                </Etiqueta>
+                <div className="mb-3">
+                  <Chips>
+                    {["opera", "no_opera", "sin_reporte"].map((v) => (
+                      <Opcion
+                        key={v}
+                        activo={filtros.vigencias.includes(v)}
+                        onClick={() =>
+                          set({ vigencias: alternaLista(filtros.vigencias, v) })
+                        }
+                      >
+                        {NOMBRE_VIGENCIA[v] ?? v}
                       </Opcion>
                     ))}
                   </Chips>

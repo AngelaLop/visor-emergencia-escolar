@@ -504,7 +504,9 @@ export default function Mapa({
             capa === "reportes-punto"
               ? `<strong>Reporte ciudadano</strong><br>${p.sede}<br>Reportado a ${p.dist_m} m de la sede`
               : `<strong>${p.sede}</strong><br>${p.mpio}, ${p.depto}<br>` +
-                `<span class="num">${miles(Number(p.matricula))}</span> estudiantes, ` +
+                `<span class="num">${miles(
+                  Number(p.matricula_2024 ?? p.matricula),
+                )}</span> estudiantes, ` +
                 `intensidad MMI ${Number(p.mmi).toFixed(1).replace(".", ",")}<br>` +
                 (p.encuestada === true || p.encuestada === "true"
                   ? "Encuestada por el FFIE"

@@ -61,7 +61,20 @@ export default function ControlDerecho({
           </div>
 
           <div className="flex items-center gap-2 md:mt-2 md:block">
-            <span className="num text-xl font-semibold leading-none">
+            {/* La matricula es la del C-600 de 2024. Para las sedes que no
+                reportaron ese ano se usa la del SIMAT 2022, porque no haber
+                reportado no es haberse quedado sin alumnos. El titulo lo dice
+                en vez de callarlo: es un numero de dos anos distintos. */}
+            <span
+              className="num text-xl font-semibold leading-none"
+              title={
+                `Matrícula del C-600 de 2024. ` +
+                (resumen.matriculaDe2022 > 0
+                  ? `${miles(resumen.matriculaDe2022)} de las ${miles(resumen.sedes)} ` +
+                    `sedes no reportaron ese año y van con su matrícula del SIMAT 2022.`
+                  : `Todas las sedes de la selección reportaron ese año.`)
+              }
+            >
               {miles(resumen.matricula)}
             </span>
             <span

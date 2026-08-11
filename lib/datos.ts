@@ -92,6 +92,9 @@ export function pasa(s: Sede, f: Filtros): boolean {
   if (f.areas.length && !f.areas.includes(s.zona ?? "")) {
     return false;
   }
+  if (f.vigencias.length && !f.vigencias.includes(s.vigencia_2024 ?? "sin_reporte")) {
+    return false;
+  }
 
   if (f.tab === "fisica") {
     if (f.fisica === "encuestadas" && !s.encuestada) return false;
@@ -120,9 +123,31 @@ export function filtra(col: ColeccionSedes, f: Filtros): RasgoSede[] {
   return col.features.filter((x) => pasa(x.properties, f));
 }
 
+/** Los alumnos que se le cuentan hoy a una sede.
+ *
+ * El marco de sedes es el SIMAT 2022 y su matricula tambien. Cuatro anos
+ * despues eso sobreestima: en la zona del sismo, el C-600 de 2024 cuenta
+ * 2.699.863 alumnos donde el SIMAT de 2022 contaba 2.875.055. Asi que manda el
+ * dato de 2024 cuando existe.
+ *
+ * Cuando no existe se usa el de 2022, y no cero. Que una sede no haya
+ * reportado al C-600 no significa que se haya quedado sin alumnos, y ponerle
+ * cero seria afirmar algo que nadie afirmo. El resumen lleva la cuenta de
+ * cuantas sedes estan en ese caso para poder decirlo en pantalla.
+ */
+export function alumnos(s: Sede): number {
+  return s.matricula_2024 ?? s.matricula ?? 0;
+}
+
 export type Resumen = {
   sedes: number;
   matricula: number;
+  /** Sedes de la seleccion cuya matricula viene de 2022 porque no hay dato de
+   *  2024. Se muestra para no dar por homogeneo un numero que no lo es. */
+  matriculaDe2022: number;
+  /** Sedes que el C-600 de 2024 declara liquidadas, fusionadas, duplicadas o
+   *  inactivas. */
+  noOperan: number;
   encuestadas: number;
   nuncaEncuestadas: number;
   matriculaIgnota: number;
@@ -144,6 +169,8 @@ export function resume(rasgos: RasgoSede[]): Resumen {
   const r: Resumen = {
     sedes: rasgos.length,
     matricula: 0,
+    matriculaDe2022: 0,
+    noOperan: 0,
     encuestadas: 0,
     nuncaEncuestadas: 0,
     matriculaIgnota: 0,
@@ -160,8 +187,10 @@ export function resume(rasgos: RasgoSede[]): Resumen {
   };
   for (const x of rasgos) {
     const s = x.properties;
-    const m = s.matricula ?? 0;
+    const m = alumnos(s);
     r.matricula += m;
+    if (s.matricula_2024 == null) r.matriculaDe2022 += 1;
+    if (s.vigencia_2024 === "no_opera") r.noOperan += 1;
     mpios.add(`${s.depto}|${s.mpio}`);
     if (s.secretaria) etc.add(s.secretaria);
     if (s.encuestada) {
@@ -235,6 +264,13 @@ export const NOMBRE_QUINTIL: Record<number, string> = {
 export const NOMBRE_AREA: Record<string, string> = {
   URBANA: "urbana",
   RURAL: "rural",
+};
+
+/** Las tres palabras que resumen la novedad declarada al C-600 de 2024. */
+export const NOMBRE_VIGENCIA: Record<string, string> = {
+  opera: "operaba en 2024",
+  no_opera: "ya no operaba",
+  sin_reporte: "no reportó",
 };
 
 export function miles(n: number): string {

@@ -22,6 +22,7 @@ import {
   NOMBRE_AREA,
   NOMBRE_QUINTIL,
   SIGNIFICADO_MMI,
+  alumnos,
   miles,
 } from "@/lib/datos";
 import type { Reporte, Sede } from "@/lib/tipos";
@@ -86,10 +87,18 @@ export default function FichaSede({ sede, reportes, onCerrar }: Props) {
 
       <div className="grid grid-cols-2 gap-3 px-4 py-3">
         <div>
-          <div className="num text-xl font-semibold">{miles(sede.matricula)}</div>
+          <div className="num text-xl font-semibold">{miles(alumnos(sede))}</div>
           <div className="text-xs" style={{ color: "var(--tinta-2)" }}>
-            estudiantes
+            estudiantes{" "}
+            <span style={{ color: "var(--tinta-3)" }}>
+              {sede.matricula_2024 != null ? "(2024)" : "(2022)"}
+            </span>
           </div>
+          {sede.vigencia_2024 === "no_opera" && (
+            <div className="mt-1 text-xs" style={{ color: "var(--sede-ignota)" }}>
+              El C-600 de 2024 la declara sin operar.
+            </div>
+          )}
         </div>
         <div>
           <div className="num text-xl font-semibold">

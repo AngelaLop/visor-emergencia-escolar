@@ -15,6 +15,13 @@ export type Sede = {
   zona?: string;
   area_class?: string;
   matricula: number;
+  /** Matricula del C-600 de 2024. Nula cuando la sede no reporto ese ano, que
+   *  no es lo mismo que cero alumnos. */
+  matricula_2024?: number | null;
+  /** opera / no_opera / sin_reporte, segun la novedad declarada en el C-600 de
+   *  2024. El marco de sedes es de 2022 y en cuatro anos hay escuelas que se
+   *  liquidaron, se fusionaron o quedaron inactivas. */
+  vigencia_2024?: string;
   rwi?: number;
   mmi: number;
   nivel: string;
@@ -147,6 +154,7 @@ export const FUENTE_MMI = {
 export type Filtros = {
   bandas: number[];
   areas: string[];
+  vigencias: string[];
   secretarias: string[];
   quintiles: number[];
   matriculaMin: number;
@@ -162,6 +170,11 @@ export const FILTROS_INICIALES: Filtros = {
   // estructural visible. Las bandas mas bajas quedan a un clic.
   bandas: [6.0, 6.5],
   areas: [],
+  // Vacio es "todas", incluidas las que ya no operan. Una escuela liquidada con
+  // el edificio en pie sigue importando despues de un sismo: puede ser
+  // albergue o puede caerse. Lo que no puede es aportar alumnos que ya no
+  // estan, y de eso se encarga la matricula de 2024, no este filtro.
+  vigencias: [],
   secretarias: [],
   quintiles: [],
   matriculaMin: 0,
