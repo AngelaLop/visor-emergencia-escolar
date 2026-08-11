@@ -22,6 +22,13 @@ export type Sede = {
    *  2024. El marco de sedes es de 2022 y en cuatro anos hay escuelas que se
    *  liquidaron, se fusionaron o quedaron inactivas. */
   vigencia_2024?: string;
+  /** Si la institucion esta en la lista de focalizacion del PTIES. */
+  ptie?: boolean;
+  /** intervenida / programada / no_focalizada / no_ptie. El ano de
+   *  intervencion llega hasta 2029, asi que estar focalizada no es estar ya
+   *  intervenida. */
+  ptie_estado?: string;
+  ptie_anio?: number | null;
   rwi?: number;
   mmi: number;
   nivel: string;
@@ -155,6 +162,7 @@ export type Filtros = {
   bandas: number[];
   areas: string[];
   vigencias: string[];
+  pties: string[];
   secretarias: string[];
   quintiles: number[];
   matriculaMin: number;
@@ -175,6 +183,9 @@ export const FILTROS_INICIALES: Filtros = {
   // albergue o puede caerse. Lo que no puede es aportar alumnos que ya no
   // estan, y de eso se encarga la matricula de 2024, no este filtro.
   vigencias: [],
+  // Vacio es "todas". El PTIES marca 72 instituciones en todo el pais y 35 en
+  // esta zona: abrir filtrando por ellas escondería el mapa entero.
+  pties: [],
   secretarias: [],
   quintiles: [],
   matriculaMin: 0,

@@ -95,6 +95,9 @@ export function pasa(s: Sede, f: Filtros): boolean {
   if (f.vigencias.length && !f.vigencias.includes(s.vigencia_2024 ?? "sin_reporte")) {
     return false;
   }
+  if (f.pties.length && !f.pties.includes(s.ptie_estado ?? "no_ptie")) {
+    return false;
+  }
 
   if (f.tab === "fisica") {
     if (f.fisica === "encuestadas" && !s.encuestada) return false;
@@ -264,6 +267,19 @@ export const NOMBRE_QUINTIL: Record<number, string> = {
 export const NOMBRE_AREA: Record<string, string> = {
   URBANA: "urbana",
   RURAL: "rural",
+};
+
+/** Estado de la sede frente al PTIES.
+ *
+ * "Focalizada" y "intervenida" no son lo mismo y por eso van separadas: el ano
+ * de intervencion del archivo llega hasta 2029, asi que hay instituciones en la
+ * lista cuya obra todavia no empieza.
+ */
+export const NOMBRE_PTIE: Record<string, string> = {
+  intervenida: "PTIES, ya intervenida",
+  programada: "PTIES, programada",
+  no_focalizada: "En la lista, sin focalizar",
+  no_ptie: "Fuera del PTIES",
 };
 
 /** Las tres palabras que resumen la novedad declarada al C-600 de 2024. */

@@ -21,6 +21,7 @@ import { COLOR_BANDA, REPORTE, svgEpicentro } from "@/components/Mapa";
 import type { Capas } from "@/components/Mapa";
 import {
   NOMBRE_AREA,
+  NOMBRE_PTIE,
   NOMBRE_QUINTIL,
   NOMBRE_VIGENCIA,
   horaLocal,
@@ -559,6 +560,26 @@ function TarjetaCapas({
                         }
                       >
                         {NOMBRE_VIGENCIA[v] ?? v}
+                      </Opcion>
+                    ))}
+                  </Chips>
+                </div>
+
+                <Etiqueta oracion>
+                  <span className="text-[11px]">Programa PTIES</span>
+                  <Info
+                    texto="El PTIES focaliza 72 instituciones educativas de media en todo el país, de las cuales 35 caen en esta zona. El archivo trae el año de intervención y llega hasta 2029, así que estar focalizada no es estar ya intervenida: son 10 intervenidas y 24 programadas dentro de la selección. La marca va sobre el código que el archivo lista y no se extiende a las demás sedes de la misma institución."
+                  />
+                </Etiqueta>
+                <div className="mb-3">
+                  <Chips>
+                    {["intervenida", "programada", "no_ptie"].map((v) => (
+                      <Opcion
+                        key={v}
+                        activo={filtros.pties.includes(v)}
+                        onClick={() => set({ pties: alternaLista(filtros.pties, v) })}
+                      >
+                        {NOMBRE_PTIE[v] ?? v}
                       </Opcion>
                     ))}
                   </Chips>

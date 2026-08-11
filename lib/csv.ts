@@ -25,6 +25,9 @@ const COLUMNAS: [string, (r: RasgoSede) => string | number][] = [
   // CSV tiene que poder distinguir "no reporto" de "se quedo sin alumnos".
   ["matricula_c600_2024", (r) => r.properties.matricula_2024 ?? ""],
   ["vigencia_2024", (r) => r.properties.vigencia_2024 ?? ""],
+  ["ptie", (r) => (r.properties.ptie ? "si" : "no")],
+  ["ptie_estado", (r) => r.properties.ptie_estado ?? ""],
+  ["ptie_anio_intervencion", (r) => r.properties.ptie_anio ?? ""],
   ["mmi", (r) => r.properties.mmi],
   ["nivel_mmi", (r) => r.properties.nivel],
   ["encuestada", (r) => (r.properties.encuestada ? "si" : "no")],

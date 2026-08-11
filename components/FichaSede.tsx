@@ -99,6 +99,15 @@ export default function FichaSede({ sede, reportes, onCerrar }: Props) {
               El C-600 de 2024 la declara sin operar.
             </div>
           )}
+          {sede.ptie && (
+            <div className="mt-1 text-xs" style={{ color: "var(--cima)" }}>
+              {sede.ptie_estado === "intervenida"
+                ? `PTIES, intervenida en ${sede.ptie_anio}`
+                : sede.ptie_estado === "programada"
+                  ? `PTIES, intervención programada para ${sede.ptie_anio}`
+                  : "En el listado del PTIES, sin focalizar"}
+            </div>
+          )}
         </div>
         <div>
           <div className="num text-xl font-semibold">
