@@ -12,6 +12,13 @@
  * Un reporte a la vez, la foto ciudadana contra la foto previa del FFIE, y dos
  * teclas. Lo que se decide aquí se escribe en
  * `data/curaduria/reportes_chatmap.csv`, que va al repositorio.
+ *
+ * Se puede volver sobre lo ya decidido. Al principio la pantalla solo mostraba
+ * los pendientes y una foto decidida desaparecía para siempre, así que un clic
+ * apurado quedaba convertido en dato permanente sin manera de mirarlo otra vez.
+ * Las pestañas de arriba recorren los cuatro subconjuntos y la decisión anterior
+ * se muestra antes de las fotos, con quién la tomó y cuándo, para que quien
+ * vuelve sepa que está corrigiendo y no decidiendo por primera vez.
  */
 
 import Link from "next/link";
@@ -21,6 +28,16 @@ import Imagen from "@/components/Imagen";
 import { diceCalidad, miles } from "@/lib/datos";
 import type { Reporte } from "@/lib/tipos";
 
+/** Que subconjunto de la cola se esta mirando. */
+type Vista = "pendientes" | "revisados" | "escuelas" | "todos";
+
+const VISTAS: { id: Vista; nombre: string }[] = [
+  { id: "pendientes", nombre: "Pendientes" },
+  { id: "revisados", nombre: "Ya revisados" },
+  { id: "escuelas", nombre: "Confirmados" },
+  { id: "todos", nombre: "Todos" },
+];
+
 export default function Triaje() {
   const [cola, setCola] = useState<Reporte[]>([]);
   const [i, setI] = useState(0);
@@ -29,6 +46,11 @@ export default function Triaje() {
   const [nota, setNota] = useState("");
   const [aviso, setAviso] = useState<string | null>(null);
   const [cargando, setCargando] = useState(true);
+  // Que subconjunto se esta mirando. Hasta ahora la pantalla solo mostraba los
+  // pendientes, asi que una foto decidida desaparecia para siempre y no habia
+  // forma de volver a mirarla ni de corregir. Una herramienta de curaduria sin
+  // marcha atras convierte un clic apurado en un dato permanente.
+  const [vista, setVista] = useState<Vista>("pendientes");
 
   useEffect(() => {
     setQuien(localStorage.getItem("visor.revisor") ?? "");
@@ -38,8 +60,16 @@ export default function Triaje() {
       .finally(() => setCargando(false));
   }, []);
 
-  const pendientes = cola.filter((r) => !r.es_escuela.trim());
-  const r = pendientes[i];
+  const decidido = (x: Reporte) => x.es_escuela.trim() !== "";
+  const pendientes = cola.filter((x) => !decidido(x));
+  const revisados = cola.filter(decidido);
+  const escuelas = cola.filter((x) => x.es_escuela === "si");
+  const lista =
+    vista === "pendientes" ? pendientes
+      : vista === "revisados" ? revisados
+        : vista === "escuelas" ? escuelas
+          : cola;
+  const r = lista[Math.min(i, Math.max(lista.length - 1, 0))];
   const candidata = r?.candidatas[j];
 
   const decide = useCallback(
@@ -74,9 +104,13 @@ export default function Triaje() {
       setAviso(null);
       setNota("");
       setJ(0);
-      setI(0);
+      // En la cola de pendientes, decidir saca el reporte de la lista y el
+      // siguiente ocupa su lugar, asi que el indice se queda quieto. Revisando
+      // lo ya decidido no se mueve nada y quedarse en el mismo sitio es lo que
+      // deja ver el cambio que se acaba de hacer.
+      if (vista === "pendientes") setI(0);
     },
-    [r, candidata, quien, nota],
+    [r, candidata, quien, nota, vista],
   );
 
   useEffect(() => {
@@ -86,10 +120,21 @@ export default function Triaje() {
       if (e.key === "n" || e.key === "N") void decide("no");
       if (e.key === "ArrowRight" && r) setJ((x) => Math.min(x + 1, r.candidatas.length - 1));
       if (e.key === "ArrowLeft") setJ((x) => Math.max(x - 1, 0));
+      // Con la cola de pendientes no hacia falta moverse: decidir ya traia el
+      // siguiente. Revisando lo decidido hay que poder recorrer la lista sin
+      // tocar nada, y por eso las teclas de avanzar y retroceder reporte.
+      if (e.key === "PageDown" || e.key === "j") {
+        setI((x) => Math.min(x + 1, lista.length - 1));
+        setJ(0);
+      }
+      if (e.key === "PageUp" || e.key === "k") {
+        setI((x) => Math.max(x - 1, 0));
+        setJ(0);
+      }
     };
     window.addEventListener("keydown", tecla);
     return () => window.removeEventListener("keydown", tecla);
-  }, [decide, r]);
+  }, [decide, r, lista.length]);
 
   if (cargando) {
     return <Marco><p className="p-6 text-sm">Cargando la cola…</p></Marco>;
@@ -112,22 +157,66 @@ export default function Triaje() {
     );
   }
 
+  const selector = (
+    <div className="mb-3 flex flex-wrap items-center gap-1.5">
+      {VISTAS.map((v) => {
+        const n =
+          v.id === "pendientes" ? pendientes.length
+            : v.id === "revisados" ? revisados.length
+              : v.id === "escuelas" ? escuelas.length
+                : cola.length;
+        const on = vista === v.id;
+        return (
+          <button
+            key={v.id}
+            onClick={() => {
+              setVista(v.id);
+              setI(0);
+              setJ(0);
+            }}
+            className="rounded-full border px-2.5 py-1 text-xs"
+            style={{
+              borderColor: on ? "var(--acento)" : "var(--linea)",
+              color: on ? "#fff" : "var(--tinta-2)",
+              background: on ? "var(--acento)" : "transparent",
+            }}
+          >
+            {v.nombre} <span className="num">{miles(n)}</span>
+          </button>
+        );
+      })}
+      <Link href="/" className="ml-auto text-xs underline">
+        Volver al mapa
+      </Link>
+    </div>
+  );
+
   if (!r) {
-    const revisados = cola.filter((x) => x.es_escuela.trim());
-    const escuelas = revisados.filter((x) => x.es_escuela === "si");
     return (
       <Marco>
-        <div className="max-w-lg p-6 text-sm">
-          <p className="mb-2 font-semibold">Cola al día.</p>
-          <p style={{ color: "var(--tinta-2)" }}>
-            <span className="num">{miles(revisados.length)}</span> reportes
-            revisados, de los cuales{" "}
-            <span className="num">{miles(escuelas.length)}</span> resultaron ser
-            escuelas y ya están en el mapa.
-          </p>
-          <Link href="/" className="mt-3 inline-block underline">
-            Volver al mapa
-          </Link>
+        <div className="mx-auto w-full max-w-5xl p-4">
+          {selector}
+          <div
+            className="rounded border p-6 text-sm"
+            style={{ borderColor: "var(--linea)", color: "var(--tinta-2)" }}
+          >
+            {vista === "pendientes" ? (
+              <>
+                <p className="mb-2 font-semibold" style={{ color: "var(--tinta)" }}>
+                  Cola al día.
+                </p>
+                <p>
+                  <span className="num">{miles(revisados.length)}</span> reportes
+                  revisados, de los cuales{" "}
+                  <span className="num">{miles(escuelas.length)}</span>{" "}
+                  resultaron ser escuelas y ya están en el mapa. Las otras
+                  pestañas dejan volver sobre lo decidido.
+                </p>
+              </>
+            ) : (
+              <p>No hay reportes en esta vista.</p>
+            )}
+          </div>
         </div>
       </Marco>
     );
@@ -136,13 +225,32 @@ export default function Triaje() {
   return (
     <Marco>
       <div className="mx-auto w-full max-w-5xl p-4">
+        {selector}
         <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
           <span className="num text-sm font-semibold">
-            Reporte {i + 1} de {pendientes.length} pendientes
+            Reporte {Math.min(i, lista.length - 1) + 1} de {lista.length}
           </span>
           <span className="text-xs" style={{ color: "var(--tinta-2)" }}>
             {r.fecha}
           </span>
+          {/* Lo que ya se decidio se dice antes de las fotos, no despues: quien
+              vuelve a mirar una foto tiene que saber que esta corrigiendo y no
+              decidiendo por primera vez. */}
+          {decidido(r) && (
+            <span
+              className="rounded-full px-2 py-0.5 text-[11px]"
+              style={{
+                background:
+                  r.es_escuela === "si" ? "var(--sede-encuestada)" : "var(--plano)",
+                color: r.es_escuela === "si" ? "#fff" : "var(--tinta-2)",
+              }}
+            >
+              {r.es_escuela === "si"
+                ? `Confirmado como escuela por ${r.revisado_por || "sin registrar"}`
+                : `Marcado "no es escuela" por ${r.revisado_por || "sin registrar"}`}
+              {r.revisado_en ? `, ${r.revisado_en}` : ""}
+            </span>
+          )}
           <div className="ml-auto flex items-center gap-2 text-xs">
             <label style={{ color: "var(--tinta-2)" }}>Revisa</label>
             <input
@@ -272,12 +380,18 @@ export default function Triaje() {
             [N] No es una escuela
           </button>
           <button
-            onClick={() => setI((x) => (x + 1) % pendientes.length)}
+            onClick={() => {
+              setI((x) => (x + 1) % Math.max(lista.length, 1));
+              setJ(0);
+            }}
             className="rounded px-3 py-2 text-xs underline"
             style={{ color: "var(--tinta-2)" }}
           >
-            Dejarlo para después
+            {vista === "pendientes" ? "Dejarlo para después" : "Siguiente"}
           </button>
+          <span className="text-[11px]" style={{ color: "var(--tinta-3)" }}>
+            J y K recorren la lista
+          </span>
           <input
             value={nota}
             onChange={(e) => setNota(e.target.value)}
