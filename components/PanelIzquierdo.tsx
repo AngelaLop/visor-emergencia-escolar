@@ -264,6 +264,36 @@ function TarjetaDanos({
   // faltan.
   const sedesConReporte = new Set(danos.map((d) => d.dane)).size;
 
+  // Una sede, su estado mas grave, para poder contar por casilla sin que una
+  // sede con dos reportes cuente dos veces.
+  const peorPorSede = () => {
+    const peor = new Map<string, Dano>();
+    for (const d of danos) {
+      const y = peor.get(d.dane);
+      if (!y || GRAVEDAD[d.estado] > GRAVEDAD[y.estado]) peor.set(d.dane, d);
+    }
+    return [...peor.values()];
+  };
+  const peores = peorPorSede();
+  const nConDano = peores.filter(
+    (d) => d.estado === "dano" || d.estado === "colapso").length;
+  const nSinDano = peores.filter((d) => d.estado === "sin_dano").length;
+  const nSinVerificar = peores.filter(
+    (d) => d.estado === "sin_verificar").length;
+
+  const marcado = (e: EstadoDano) => capas.estadosDano.includes(e);
+  const alternar = (es: EstadoDano[]) => {
+    const prendido = es.every(marcado);
+    const resto = capas.estadosDano.filter((x) => !es.includes(x));
+    onCapas({ ...capas, estadosDano: prendido ? resto : [...resto, ...es] });
+  };
+  // Inspeccionadas no es una casilla: es la suma de las dos primeras. El
+  // denominador solo aparece cuando quien mira prendio las dos, y por eso
+  // nunca se ve una tasa que nadie pidio.
+  const inspeccionadas = marcado("dano") && marcado("sin_dano")
+    ? `${miles(nConDano)} de ${miles(nConDano + nSinDano)} revisadas`
+    : null;
+
   return (
     <Tarjeta>
       <div className="flex items-center gap-2 px-4 py-2.5">
@@ -302,6 +332,39 @@ function TarjetaDanos({
         >
           {abierta ? "▾" : "▸"}
         </button>
+      </div>
+
+      {/* Las tres casillas van fuera del plegado: son el filtro de la capa y
+          tienen que poder tocarse sin desplegar la tarjeta entera. */}
+      <div className="flex flex-wrap items-center gap-1.5 px-4 pb-2">
+        <Casilla
+          activa={marcado("dano")}
+          onAlternar={() => alternar(["dano", "colapso"])}
+          nombre="Con daño"
+          n={nConDano}
+          nota="colapso o daño declarado por alguna de las tres fuentes"
+        />
+        <Casilla
+          activa={marcado("sin_dano")}
+          onAlternar={() => alternar(["sin_dano"])}
+          nombre="Sin daño"
+          n={nSinDano}
+          hueca
+          nota="alguien fue a mirar y no encontró afectación. No es lo mismo que no tener reporte."
+        />
+        <Casilla
+          activa={marcado("sin_verificar")}
+          onAlternar={() => alternar(["sin_verificar"])}
+          nombre="Sin verificar"
+          n={nSinVerificar}
+          hueca
+          nota="hay una foto emparejada con la sede, pero nadie ha evaluado el edificio"
+        />
+        {inspeccionadas && (
+          <span className="num text-[11px]" style={{ color: "var(--tinta-3)" }}>
+            {inspeccionadas}
+          </span>
+        )}
       </div>
 
       {abierta && (
@@ -1598,5 +1661,46 @@ function Gota({ color }: { color: string }) {
         fill={color}
       />
     </svg>
+  );
+}
+
+/** Una casilla de estado de la capa de daños.
+ *
+ * `hueca` dibuja la marca sin relleno, igual que el punto en el mapa: la forma
+ * de la leyenda y la del dato tienen que ser la misma o la leyenda no explica
+ * nada.
+ */
+function Casilla({
+  activa, onAlternar, nombre, n, nota, hueca,
+}: {
+  activa: boolean;
+  onAlternar: () => void;
+  nombre: string;
+  n: number;
+  nota: string;
+  hueca?: boolean;
+}) {
+  return (
+    <button
+      onClick={onAlternar}
+      title={nota}
+      className="flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px]"
+      style={{
+        borderColor: activa ? "var(--acento)" : "var(--linea)",
+        color: activa ? "var(--tinta)" : "var(--tinta-3)",
+        background: activa ? "var(--plano)" : "transparent",
+      }}
+    >
+      <span
+        className="inline-block h-2.5 w-2.5 rounded-full"
+        style={{
+          background: hueca ? "transparent" : "var(--tinta-2)",
+          border: hueca ? "1.5px solid var(--tinta-2)" : "none",
+          opacity: activa ? 1 : 0.4,
+        }}
+      />
+      {nombre}
+      <span className="num" style={{ color: "var(--tinta-3)" }}>{miles(n)}</span>
+    </button>
   );
 }

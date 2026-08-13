@@ -28,7 +28,7 @@ const COLUMNAS = ["id", "fecha", "lat", "lon", "url_foto", "texto", "candidatas"
  * Hace falta un parseo de verdad y no un `split(",")`: la columna `candidatas`
  * lleva JSON dentro, con comas y comillas escapadas.
  */
-function partir(linea: string): string[] {
+export function partir(linea: string): string[] {
   const campos: string[] = [];
   let actual = "";
   let entre = false;
@@ -56,7 +56,7 @@ function partir(linea: string): string[] {
   return campos;
 }
 
-function filasDeTexto(texto: string): string[][] {
+export function filasDeTexto(texto: string): string[][] {
   const filas: string[][] = [];
   let linea = "";
   let entre = false;
@@ -73,7 +73,7 @@ function filasDeTexto(texto: string): string[][] {
   return filas;
 }
 
-function campo(v: string): string {
+export function campo(v: string): string {
   return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
 }
 

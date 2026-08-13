@@ -29,10 +29,14 @@ import { diceCalidad, miles } from "@/lib/datos";
 import type { Reporte } from "@/lib/tipos";
 
 /** Que subconjunto de la cola se esta mirando. */
-type Vista = "pendientes" | "revisados" | "escuelas" | "todos";
+type Vista = "pendientes" | "sinCerca" | "revisados" | "escuelas" | "todos";
 
 const VISTAS: { id: Vista; nombre: string }[] = [
   { id: "pendientes", nombre: "Pendientes" },
+  // Los reportes sin ninguna sede a 400 m no estan decididos, pero tampoco se
+  // pueden asignar: no hay a que. Sacarlos de "Pendientes" es orden, no
+  // decision, y siguen enteros aqui al lado por si el punto llega corrido.
+  { id: "sinCerca", nombre: "Sin sede cerca" },
   { id: "revisados", nombre: "Ya revisados" },
   { id: "escuelas", nombre: "Confirmados" },
   { id: "todos", nombre: "Todos" },
@@ -61,14 +65,26 @@ export default function Triaje() {
   }, []);
 
   const decidido = (x: Reporte) => x.es_escuela.trim() !== "";
-  const pendientes = cola.filter((x) => !decidido(x));
+  // Pendiente de verdad es el que se puede decidir. Un reporte sin ninguna
+  // sede a 400 m obliga a mirar una foto para terminar diciendo que no, y de
+  // 54 pendientes eran 25.
+  // Ordenados por lo cerca que quedo la sede mas cercana. Un punto a 90 m de
+  // una escuela puede ser esa escuela; uno a 350 m casi nunca lo es, y el
+  // reparto real esta muy separado: los cuatro primeros estan por debajo de
+  // 120 m y despues hay un salto. Mirar primero los cercanos concentra el rato
+  // de revision donde estan las asignaciones que si se pueden hacer.
+  const pendientes = cola
+    .filter((x) => !decidido(x) && x.candidatas.length > 0)
+    .sort((a, b) => a.candidatas[0].dist_m - b.candidatas[0].dist_m);
+  const sinCerca = cola.filter((x) => !decidido(x) && x.candidatas.length === 0);
   const revisados = cola.filter(decidido);
   const escuelas = cola.filter((x) => x.es_escuela === "si");
   const lista =
     vista === "pendientes" ? pendientes
-      : vista === "revisados" ? revisados
-        : vista === "escuelas" ? escuelas
-          : cola;
+      : vista === "sinCerca" ? sinCerca
+        : vista === "revisados" ? revisados
+          : vista === "escuelas" ? escuelas
+            : cola;
   const r = lista[Math.min(i, Math.max(lista.length - 1, 0))];
   const candidata = r?.candidatas[j];
 
@@ -162,9 +178,10 @@ export default function Triaje() {
       {VISTAS.map((v) => {
         const n =
           v.id === "pendientes" ? pendientes.length
-            : v.id === "revisados" ? revisados.length
-              : v.id === "escuelas" ? escuelas.length
-                : cola.length;
+            : v.id === "sinCerca" ? sinCerca.length
+              : v.id === "revisados" ? revisados.length
+                : v.id === "escuelas" ? escuelas.length
+                  : cola.length;
         const on = vista === v.id;
         return (
           <button
@@ -358,7 +375,7 @@ export default function Triaje() {
             </>
           ) : (
             <p className="text-sm" style={{ color: "var(--critico)" }}>
-              Ninguna sede a 500 metros o menos del punto reportado. Casi con
+              Ninguna sede a 400 metros o menos del punto reportado. Casi con
               seguridad no es una escuela.
             </p>
           )}

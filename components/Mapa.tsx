@@ -33,6 +33,7 @@ import { useEffect, useRef } from "react";
 
 import { cargaHuellas, miles, TONO_IVID } from "@/lib/datos";
 import { BANDAS, GRAVEDAD, NOMBRE_ESTADO, NOMBRE_FUENTE } from "@/lib/tipos";
+import type { EstadoDano } from "@/lib/tipos";
 import type {
   Dano,
   Evento,
@@ -140,6 +141,17 @@ export type Capas = {
   sedes: boolean;
   reportes: boolean;
   huellas: boolean;
+  /** Que estados de la capa de daños se dibujan.
+   *
+   * Un reporte contesta dos preguntas encadenadas: si alguien fue a mirar y
+   * que encontro. Los cuatro estados las mezclaban en una lista plana, y por
+   * eso no habia por donde filtrar. Separadas, "inspeccionadas" deja de ser una
+   * categoria y pasa a ser la suma de las dos primeras casillas.
+   *
+   * Abre solo con daño. Una escuela que alguien reviso y encontro bien no se
+   * pinta en un mapa de daños hasta que se pida, y la que tiene foto
+   * emparejada pero nadie evaluo, tampoco: ninguna de las dos afirma daño. */
+  estadosDano: EstadoDano[];
 };
 
 export const CAPAS_INICIALES: Capas = {
@@ -147,6 +159,7 @@ export const CAPAS_INICIALES: Capas = {
   sedes: true,
   reportes: true,
   huellas: true,
+  estadosDano: ["colapso", "dano"],
 };
 
 /** El color dice lo que pregunta la pestana activa, y nada mas.
@@ -335,7 +348,13 @@ export default function Mapa({
       const y = peor.get(d.dane);
       if (!y || GRAVEDAD[d.estado] > GRAVEDAD[y.estado]) peor.set(d.dane, d);
     }
-    return [...peor.values()].map((d) => ({
+    // Fuera las que no tienen coordenada. Son 5 sedes de Manizales cuyo
+    // `lat`/`lon` es nulo en el directorio, y el script 27 ya las cuenta como
+    // no dibujables. Sin este filtro entraban a la fuente GeoJSON con
+    // `coordinates: [null, null]`, que MapLibre acepta sin quejarse y deja el
+    // punto en un sitio que no existe.
+    return [...peor.values()].filter((d) => d.lon != null && d.lat != null)
+      .map((d) => ({
       type: "Feature" as const,
       properties: {
         id: d.id,
@@ -610,11 +629,20 @@ export default function Mapa({
     // De cerca, el pin del color de la fuente, encima del pin grafito de la
     // misma sede. De lejos no caben pines y se usa el circulo, igual que las
     // sedes. Los dos son el mismo dato con dos representaciones.
+    // El filtro por estado es lo que separa "que encontraron" de "si fueron".
+    // `sin_dano` nunca entra en estas dos capas: tiene la suya, hueca, para que
+    // no se lea como afectacion.
+    const filtroEstado = (estados: EstadoDano[]): Expr =>
+      ["in", ["get", "estado"], ["literal", estados]] as Expr;
+    const conDano = (c: Capas): EstadoDano[] =>
+      c.estadosDano.filter((e) => e !== "sin_dano");
+
     m.addLayer({
       id: "danos-pin",
       type: "symbol",
       source: "danos",
       minzoom: ZOOM_PIN,
+      filter: filtroEstado(conDano(d.capas)),
       layout: {
         visibility: visible(d.capas.reportes),
         "icon-image": [
@@ -645,6 +673,7 @@ export default function Mapa({
       type: "circle",
       source: "danos",
       maxzoom: ZOOM_PIN,
+      filter: filtroEstado(conDano(d.capas)),
       layout: { visibility: visible(d.capas.reportes) },
       paint: {
         "circle-radius": [
@@ -656,6 +685,29 @@ export default function Mapa({
         "circle-opacity": 0.95,
         "circle-stroke-color": "#ffffff",
         "circle-stroke-width": 2.5,
+      },
+    });
+
+    // Verificada y sin daño. Va hueca y del color de su fuente: dice quien fue
+    // a mirar sin afirmar afectacion. Sin relleno no compite con los puntos de
+    // daño, que son los que hay que ver primero, y a la vez deja constancia de
+    // que ese predio ya se reviso. Sin esta distincion, "no aparece en el mapa"
+    // significaria a la vez "nadie fue" y "fueron y esta bien".
+    m.addLayer({
+      id: "danos-sin",
+      type: "circle",
+      source: "danos",
+      filter: filtroEstado(
+        d.capas.estadosDano.includes("sin_dano") ? ["sin_dano"] : []),
+      layout: { visibility: visible(d.capas.reportes) },
+      paint: {
+        "circle-radius": [
+          "interpolate", ["linear"], ["zoom"], 5, 5, 14, 9,
+        ] as never,
+        "circle-color": "rgba(0,0,0,0)",
+        "circle-stroke-color": porFuente as never,
+        "circle-stroke-width": 2,
+        "circle-stroke-opacity": 0.9,
       },
     });
 
@@ -712,7 +764,8 @@ export default function Mapa({
     m.on("load", () => {
       montaCapas(m);
 
-      const capasClic = ["danos-pin", "danos-punto", "sedes-pin", "sedes-punto"];
+      const capasClic = ["danos-pin", "danos-punto", "danos-sin",
+        "sedes-pin", "sedes-punto"];
       for (const capa of capasClic) {
         m.on("mouseenter", capa, () => (m.getCanvas().style.cursor = "pointer"));
         m.on("mouseleave", capa, () => {
@@ -909,6 +962,17 @@ export default function Mapa({
       ver("sedes-realce", capas.sedes && pintaPorIvid(filtros));
       ver("danos-punto", capas.reportes);
       ver("danos-pin", capas.reportes);
+      ver("danos-sin", capas.reportes);
+      // Los estados se filtran aqui y no rehaciendo la fuente: son 141 puntos
+      // y volver a construir el GeoJSON en cada casilla haria parpadear el mapa.
+      const sinDano = capas.estadosDano.includes("sin_dano");
+      const conDanoAhora = capas.estadosDano.filter((e) => e !== "sin_dano");
+      m.setFilter("danos-pin",
+        ["in", ["get", "estado"], ["literal", conDanoAhora]]);
+      m.setFilter("danos-punto",
+        ["in", ["get", "estado"], ["literal", conDanoAhora]]);
+      m.setFilter("danos-sin",
+        ["in", ["get", "estado"], ["literal", sinDano ? ["sin_dano"] : []]]);
       ver("huellas-relleno", capas.huellas);
       ver("huellas-linea", capas.huellas);
     });
