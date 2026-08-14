@@ -372,7 +372,6 @@ function TarjetaDanos({
           onAlternar={() => alternar(["sin_dano"])}
           nombre="Sin daño"
           n={nSinDano}
-          hueca
           nota="alguien fue a mirar y no encontró afectación. No es lo mismo que no tener reporte."
         />
         <Casilla
@@ -380,7 +379,6 @@ function TarjetaDanos({
           onAlternar={() => alternar(["sin_verificar"])}
           nombre="Sin verificar"
           n={nSinVerificar}
-          hueca
           nota="hay una foto emparejada con la sede, pero nadie ha evaluado el edificio"
         />
         {inspeccionadas && (
@@ -1687,41 +1685,37 @@ function Gota({ color }: { color: string }) {
   );
 }
 
-/** Una casilla de estado de la capa de daños.
+/** Una casilla de estado: nombre, cuántas sedes y si está prendida.
  *
- * `hueca` dibuja la marca sin relleno, igual que el punto en el mapa: la forma
- * de la leyenda y la del dato tienen que ser la misma o la leyenda no explica
- * nada.
+ *  Llevaba un punto gris a la izquierda, relleno o hueco segun el estado
+ *  afirmara daño o no. Se quito: el punto usaba `--tinta-2` para las cuatro
+ *  casillas, o sea el mismo gris, asi que no distinguia nada por color, y al
+ *  ponerse al 40 % de opacidad en las apagadas quedaba igual que un radio
+ *  button desactivado. La casilla ya dice si esta prendida con el borde, el
+ *  fondo y el color del texto, que son tres señales; el punto era una cuarta
+ *  que contradecia a las otras.
  */
 function Casilla({
-  activa, onAlternar, nombre, n, nota, hueca,
+  activa, onAlternar, nombre, n, nota,
 }: {
   activa: boolean;
   onAlternar: () => void;
   nombre: string;
   n: number;
   nota: string;
-  hueca?: boolean;
 }) {
   return (
     <button
       onClick={onAlternar}
       title={nota}
-      className="flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px]"
+      aria-pressed={activa}
+      className="flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px]"
       style={{
         borderColor: activa ? "var(--acento)" : "var(--linea)",
         color: activa ? "var(--tinta)" : "var(--tinta-3)",
         background: activa ? "var(--plano)" : "transparent",
       }}
     >
-      <span
-        className="inline-block h-2.5 w-2.5 rounded-full"
-        style={{
-          background: hueca ? "transparent" : "var(--tinta-2)",
-          border: hueca ? "1.5px solid var(--tinta-2)" : "none",
-          opacity: activa ? 1 : 0.4,
-        }}
-      />
       {nombre}
       <span className="num" style={{ color: "var(--tinta-3)" }}>{miles(n)}</span>
     </button>
