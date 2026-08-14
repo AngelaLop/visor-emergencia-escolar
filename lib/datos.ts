@@ -162,12 +162,18 @@ export function filtra(col: ColeccionSedes, f: Filtros): RasgoSede[] {
  * sede está en ese conjunto. Cualquier filtro que se agregue mañana funciona sin
  * tocar esta función.
  *
- * Encima van tres condiciones propias de esta capa. Sin coordenada no hay dónde
- * dibujarlo. Debajo de `BANDA_MINIMA_DANO` no se dibuja, aunque la sede esté
- * seleccionada. Y "sin daño" tampoco: esta capa es de daños reportados, y un
- * punto que significa "ya preguntamos y está bien" solo le quita espacio al que
- * significa que se cayó. Ninguno de los dos datos se pierde, siguen en el
- * archivo y en la ficha de la sede.
+ * Encima van dos condiciones propias de esta capa. Sin coordenada no hay dónde
+ * dibujarlo. Y debajo de `BANDA_MINIMA_DANO` no se dibuja, aunque la sede esté
+ * seleccionada.
+ *
+ * Lo que aquí NO se decide es el estado. Antes esta función descartaba los
+ * "sin daño", con el argumento de que un punto que significa "ya preguntamos y
+ * está bien" le quita espacio al que significa que se cayó. El argumento vale
+ * para lo que se dibuja al abrir, y eso ya lo resuelve `CAPAS_INICIALES`, que
+ * abre solo en colapso y daño. Descartarlos aquí además dejaba sin nada que
+ * contar a la casilla "Sin daño": marcaba 0 con cuatro sedes en el archivo, y
+ * la razón de inspeccionadas salía "N de N". El estado lo filtran las casillas,
+ * que es donde quien mira puede verlo y cambiarlo.
  *
  * Las sedes sin banda quedan fuera por partida doble: no están en la colección,
  * porque están fuera de la grilla del ShakeMap del USGS, así que tampoco están
@@ -181,17 +187,21 @@ export function danosVisibles(danos: Dano[], sedes: RasgoSede[]): Dano[] {
       d.lon != null &&
       d.lat != null &&
       d.banda != null &&
-      d.banda >= BANDA_MINIMA_DANO &&
-      d.estado !== "sin_dano",
+      d.banda >= BANDA_MINIMA_DANO,
   );
 }
 
 /** Los daños que existen y no se están viendo, contados por sede.
  *
  * No es un recorte silencioso: la tarjeta lo dice. Se cuentan solo los que
- * podrían llegar a verse cambiando los filtros, o sea los que afirman daño y
- * pasan el piso de intensidad. Los "sin daño" y los de fuera de la grilla no
- * cuentan, porque no hay filtro que los traiga.
+ * podrían llegar a verse cambiando los filtros, o sea los que pasan el piso de
+ * intensidad. Los de fuera de la grilla no cuentan, porque no hay filtro que
+ * los traiga.
+ *
+ * Los "sin daño" sí cuentan, desde que tienen casilla propia. Antes se
+ * excluían porque no había forma de traerlos a la pantalla; ahora la hay, y
+ * dejarlos fuera de este conteo diría que no existen justo a quien está
+ * buscando qué le falta por ver.
  */
 export function danosFuera(danos: Dano[], visibles: Dano[]): number {
   const vistos = new Set(visibles.map((d) => d.dane));
@@ -200,7 +210,6 @@ export function danosFuera(danos: Dano[], visibles: Dano[]): number {
       .filter(
         (d) =>
           !vistos.has(d.dane) &&
-          d.estado !== "sin_dano" &&
           d.lon != null &&
           d.banda != null &&
           d.banda >= BANDA_MINIMA_DANO,

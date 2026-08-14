@@ -134,10 +134,27 @@ export type FuenteDano = "hot" | "oficial" | "noticia";
 
 /** Los cuatro estados posibles, cerrados a proposito.
  *
- *  `sin_dano` no sobra: que alguien haya mirado y no haya encontrado nada es
- *  informacion, y borrarla obligaria a volver a preguntar. `sin_verificar` es
- *  lo que afirma una foto ciudadana confirmada, que es exactamente nada sobre
- *  el estado del edificio.
+ *  `colapso`  Se vino abajo un elemento estructural: muros, techos, fachada, un
+ *             aula, un area entera del predio. El cielorraso no cuenta, que es
+ *             acabado y no estructura.
+ *  `dano`     Afectacion que no llega a lo anterior: grietas, fisuras,
+ *             dilataciones, cielorrasos caidos, tuberia rota.
+ *  `sin_dano` Alguien fue a mirar y no encontro nada. No sobra: borrarlo
+ *             obligaria a volver a preguntar.
+ *  `sin_verificar`  Lo que afirma una foto ciudadana confirmada, que es
+ *             exactamente nada sobre el estado del edificio.
+ *
+ *  El umbral de `colapso` estuvo sin escribir hasta el 13 de agosto de 2026 y
+ *  eso costo caro: la casilla marcaba 14 sedes cuando las escuelas que de
+ *  verdad se cayeron eran 2. El resto venia del inventario de la Alcaldia de
+ *  Manizales, que titula "Colapso parcial infraestructura" a entradas que
+ *  describen un cielorraso caido. La linea quedo en la estructura porque
+ *  respeta ese vocabulario sin vaciarlo de sentido. Ver
+ *  `scripts/35_criterio_colapso_alcance.py`.
+ *
+ *  Lo que este umbral todavia no separa: Calima, donde el edificio cayo sobre
+ *  los estudiantes y murieron cinco niños, y una fachada caida en un colegio
+ *  evacuado a tiempo. Las dos son `colapso`.
  */
 export type EstadoDano = "colapso" | "dano" | "sin_dano" | "sin_verificar";
 

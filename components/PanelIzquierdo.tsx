@@ -259,10 +259,19 @@ function TarjetaDanos({
   };
   const sedesDe = (ds: Dano[]) => ds.length;
   const matriculaDe = (ds: Dano[]) => ds.reduce((a, d) => a + d.matricula, 0);
+  const marcado = (e: EstadoDano) => capas.estadosDano.includes(e);
+  const alternar = (es: EstadoDano[]) => {
+    const prendido = es.every(marcado);
+    const resto = capas.estadosDano.filter((x) => !es.includes(x));
+    onCapas({ ...capas, estadosDano: prendido ? resto : [...resto, ...es] });
+  };
+
   // El numero del encabezado cuenta exactamente los puntos que hay en el mapa,
   // ni uno mas. Si contara otra cosa, quien cuente los puntos creeria que le
-  // faltan.
-  const sedesConReporte = new Set(danos.map((d) => d.dane)).size;
+  // faltan. Por eso mira las casillas: una sede cuyo estado esta desmarcado no
+  // se dibuja y no se cuenta.
+  const sedesConReporte = new Set(
+    danos.filter((d) => marcado(d.estado)).map((d) => d.dane)).size;
 
   // Una sede, su estado mas grave, para poder contar por casilla sin que una
   // sede con dos reportes cuente dos veces.
@@ -275,24 +284,25 @@ function TarjetaDanos({
     return [...peor.values()];
   };
   const peores = peorPorSede();
-  const nConDano = peores.filter(
-    (d) => d.estado === "dano" || d.estado === "colapso").length;
+  // El numero de cada casilla cuenta lo que hay, no lo que se esta viendo. Es
+  // deliberado y es lo contrario del encabezado: en una casilla apagada el
+  // numero dice cuanto apareceria al prenderla, que es lo unico que hace util
+  // prenderla. Si contara lo visible, toda casilla apagada diria cero y no
+  // habria forma de saber si vale la pena tocarla.
+  const nColapso = peores.filter((d) => d.estado === "colapso").length;
+  const nDano = peores.filter((d) => d.estado === "dano").length;
   const nSinDano = peores.filter((d) => d.estado === "sin_dano").length;
   const nSinVerificar = peores.filter(
     (d) => d.estado === "sin_verificar").length;
 
-  const marcado = (e: EstadoDano) => capas.estadosDano.includes(e);
-  const alternar = (es: EstadoDano[]) => {
-    const prendido = es.every(marcado);
-    const resto = capas.estadosDano.filter((x) => !es.includes(x));
-    onCapas({ ...capas, estadosDano: prendido ? resto : [...resto, ...es] });
-  };
-  // Inspeccionadas no es una casilla: es la suma de las dos primeras. El
-  // denominador solo aparece cuando quien mira prendio las dos, y por eso
-  // nunca se ve una tasa que nadie pidio.
-  const inspeccionadas = marcado("dano") && marcado("sin_dano")
-    ? `${miles(nConDano)} de ${miles(nConDano + nSinDano)} revisadas`
-    : null;
+  // Inspeccionadas no es una casilla: es la suma de las que afirman daño mas
+  // las que afirman que no lo hay. El denominador solo aparece cuando quien
+  // mira prendio las tres, y por eso nunca se ve una tasa que nadie pidio.
+  const inspeccionadas =
+    marcado("colapso") && marcado("dano") && marcado("sin_dano")
+      ? `${miles(nColapso + nDano)} de `
+        + `${miles(nColapso + nDano + nSinDano)} revisadas`
+      : null;
 
   return (
     <Tarjeta>
@@ -334,15 +344,28 @@ function TarjetaDanos({
         </button>
       </div>
 
-      {/* Las tres casillas van fuera del plegado: son el filtro de la capa y
-          tienen que poder tocarse sin desplegar la tarjeta entera. */}
+      {/* Las cuatro casillas van fuera del plegado: son el filtro de la capa y
+          tienen que poder tocarse sin desplegar la tarjeta entera.
+
+          El colapso tiene casilla propia y no va sumado a "con daño". Son la
+          misma escala pero no la misma pregunta: quien reparte cuadrillas
+          busca los edificios caidos y no quiere leerlos mezclados con las 112
+          filas que hablan de grietas. Van en orden de gravedad, que es el
+          orden en que hay que ir a mirar. */}
       <div className="flex flex-wrap items-center gap-1.5 px-4 pb-2">
         <Casilla
+          activa={marcado("colapso")}
+          onAlternar={() => alternar(["colapso"])}
+          nombre="Colapso"
+          n={nColapso}
+          nota="la fuente afirma que la edificación se vino abajo, entera o en parte"
+        />
+        <Casilla
           activa={marcado("dano")}
-          onAlternar={() => alternar(["dano", "colapso"])}
+          onAlternar={() => alternar(["dano"])}
           nombre="Con daño"
-          n={nConDano}
-          nota="colapso o daño declarado por alguna de las tres fuentes"
+          n={nDano}
+          nota="daño declarado por alguna de las tres fuentes, sin llegar a colapso"
         />
         <Casilla
           activa={marcado("sin_dano")}
