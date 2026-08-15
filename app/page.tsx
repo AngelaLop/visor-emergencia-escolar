@@ -126,11 +126,20 @@ export default function Pagina() {
   );
   const resumen = useMemo(() => resume(seleccionadas), [seleccionadas]);
 
-  // Los puntos de daño ya no dependen de la selección de sedes. Lo reportado por
-  // una fuente se ve aunque el modelo esté apagado o filtrado, que es lo que
-  // separa la evidencia de la estimación. Ver `danosVisibles`.
+  // Los puntos de daño no dependen de la selección de sedes ni de que la capa de
+  // intensidad esté encendida. Lo que sí respetan, salvo que se pida lo
+  // contrario, es el recorte de bandas: ver `danosTodasLasBandas` en `Capas`.
   const danosEnMapa = useMemo(() => danosVisibles(danos), [danos]);
   const nDanosFuera = useMemo(() => danosFuera(danos), [danos]);
+  // Los que de verdad se están dibujando, que es lo que tiene que contar el
+  // contador de arriba a la derecha cuando la pantalla muestra solo daños.
+  const danosPintados = useMemo(
+    () => (capas.danosTodasLasBandas
+      ? danosEnMapa
+      : danosEnMapa.filter(
+        (d) => d.banda != null && filtros.bandas.includes(d.banda))),
+    [danosEnMapa, capas.danosTodasLasBandas, filtros.bandas],
+  );
 
   /** Cuándo la pantalla está mostrando solo las escuelas con daño.
    *
@@ -141,15 +150,12 @@ export default function Pagina() {
    *
    * Con la capa de sedes apagada, el contador de arriba a la derecha estaba
    * contestando una pregunta que nadie hizo: cuántas sedes dejan pasar los
-   * filtros, mientras en el mapa lo único visible eran los puntos de daño. Los
-   * dos números pueden estar muy lejos, porque el reporte de daño dejó de
-   * depender de las bandas de intensidad: hoy 91 de las 189 sedes con reporte
-   * dibujables caen fuera de las bandas 6,0 y 6,5 con las que abre el visor.
+   * filtros, mientras en el mapa lo único visible eran los puntos de daño.
    */
   const soloDanos = capas.reportes && !capas.sedes;
   const rasgosConDano = useMemo(
-    () => sedesConDano(coleccion, danosEnMapa, capas.estadosDano),
-    [coleccion, danosEnMapa, capas.estadosDano],
+    () => sedesConDano(coleccion, danosPintados, capas.estadosDano),
+    [coleccion, danosPintados, capas.estadosDano],
   );
   const resumenDanos = useMemo(() => resume(rasgosConDano), [rasgosConDano]);
   // Lo que cuenta el contador y lo que se lleva la descarga tienen que ser la

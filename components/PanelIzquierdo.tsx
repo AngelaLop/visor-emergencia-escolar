@@ -252,9 +252,24 @@ function TarjetaDanos({
   // La lista muestra lo mismo que el mapa dibuja, ni una fila mas: `danos` trae
   // todo reporte con coordenada, que es exactamente lo que se pinta. Una fila
   // sin punto mandaría a buscar en el mapa algo que no está.
+  // El recorte de intensidad, aplicado a todo lo que esta tarjeta cuenta y
+  // lista. Es lo que sostiene la promesa de los comentarios de aquí abajo: que
+  // el número del encabezado y las filas de cada fuente son exactamente los
+  // puntos del mapa. Con la casilla "ver todas las intensidades" apagada, el
+  // mapa dibuja solo los reportes de las bandas encendidas, así que contar los
+  // demás mandaría a buscar puntos que no están.
+  //
+  // Una sede sin banda nunca pasa el recorte. Son las cinco que caen fuera de la
+  // grilla del ShakeMap del USGS, donde no hay intensidad estimada de ningún
+  // valor, así que no pertenecen a ninguna selección de bandas.
+  const enBanda = (d: Dano) =>
+    capas.danosTodasLasBandas
+    || (d.banda != null && filtros.bandas.includes(d.banda));
+  const danosDibujados = danos.filter(enBanda);
+
   const porFuente = (f: FuenteDano) => {
     const peor = new Map<string, Dano>();
-    for (const d of danos) {
+    for (const d of danosDibujados) {
       if (d.fuente !== f) continue;
       const y = peor.get(d.dane);
       if (!y || GRAVEDAD[d.estado] > GRAVEDAD[y.estado]) peor.set(d.dane, d);
@@ -275,24 +290,31 @@ function TarjetaDanos({
   // faltan. Por eso mira las casillas: una sede cuyo estado esta desmarcado no
   // se dibuja y no se cuenta.
   const sedesConReporte = new Set(
-    danos.filter((d) => marcado(d.estado)).map((d) => d.dane)).size;
+    danosDibujados.filter((d) => marcado(d.estado)).map((d) => d.dane)).size;
 
   // Una sede, su estado mas grave, para poder contar por casilla sin que una
   // sede con dos reportes cuente dos veces.
-  const peorPorSede = () => {
+  const peorPorSede = (ds: Dano[]) => {
     const peor = new Map<string, Dano>();
-    for (const d of danos) {
+    for (const d of ds) {
       const y = peor.get(d.dane);
       if (!y || GRAVEDAD[d.estado] > GRAVEDAD[y.estado]) peor.set(d.dane, d);
     }
     return [...peor.values()];
   };
-  const peores = peorPorSede();
-  // El numero de cada casilla cuenta lo que hay, no lo que se esta viendo. Es
-  // deliberado y es lo contrario del encabezado: en una casilla apagada el
-  // numero dice cuanto apareceria al prenderla, que es lo unico que hace util
-  // prenderla. Si contara lo visible, toda casilla apagada diria cero y no
-  // habria forma de saber si vale la pena tocarla.
+  const peores = peorPorSede(danosDibujados);
+  // Sin recortar, que es contra lo que se mide cuanto se esta dejando fuera.
+  const peoresTodos = peorPorSede(danos);
+  // El numero de cada casilla cuenta lo que hay dentro del recorte, marcada o
+  // no. Que no mire su propia casilla es deliberado y es lo contrario del
+  // encabezado: en una casilla apagada el numero dice cuanto apareceria al
+  // prenderla, que es lo unico que hace util prenderla. Si contara lo visible,
+  // toda casilla apagada diria cero.
+  //
+  // El recorte de intensidad si lo aplica, y por la misma razon: prender una
+  // casilla hace aparecer justo esos puntos y no los de las bandas apagadas.
+  // Cuantos quedan fuera del recorte se dice aparte, en la casilla de ver todas
+  // las intensidades, que es donde se puede hacer algo al respecto.
   const nColapso = peores.filter((d) => d.estado === "colapso").length;
   const nDano = peores.filter((d) => d.estado === "dano").length;
   const nSinDano = peores.filter((d) => d.estado === "sin_dano").length;
@@ -320,10 +342,11 @@ function TarjetaDanos({
   // La banda nula es otra cosa y va contada aparte en la nota: son las cinco
   // sedes que caen fuera de la grilla del ShakeMap del USGS, donde no hay
   // intensidad estimada de ningun valor.
-  const fueraDeBanda = peores.filter(
+  const fueraDeBanda = peoresTodos.filter(
     (d) => marcado(d.estado)
       && (d.banda == null || !filtros.bandas.includes(d.banda)),
   ).length;
+  const todasLasBandas = capas.danosTodasLasBandas;
 
   return (
     <Tarjeta>
@@ -409,12 +432,52 @@ function TarjetaDanos({
         )}
       </div>
 
+      {/* La opcion de soltar el recorte de intensidad, pegada al numero que la
+          justifica. Va aqui y no en la tarjeta de capas porque es una decision
+          sobre esta capa, y porque el numero de sedes que se estan quedando
+          fuera es lo que hace entender para que sirve.
+
+          Apagada, el mapa cuenta una sola cosa: intensidad, escuelas y reportes
+          hablan del mismo territorio. Encendida, aparecen todos los reportes,
+          incluidos los de las cinco sedes que ni siquiera tienen banda porque
+          caen fuera de la grilla del ShakeMap, y los que quedan fuera del
+          recorte se dibujan atenuados para que se note cuales son. */}
       {fueraDeBanda > 0 && (
-        <p className="px-4 pb-2 text-[11px]" style={{ color: "var(--tinta-3)" }}>
-          <span className="num">{miles(fueraDeBanda)}</span> de esas sedes
-          quedan fuera de las bandas de intensidad encendidas. Se dibujan
-          atenuadas.
-        </p>
+        <div className="px-4 pb-2">
+          <button
+            onClick={() =>
+              onCapas({ ...capas, danosTodasLasBandas: !todasLasBandas })
+            }
+            className="flex w-full items-start gap-2 text-left text-[11px]"
+            style={{ color: "var(--tinta-3)" }}
+          >
+            <span
+              className="mt-px flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border text-[9px] leading-none"
+              style={{
+                borderColor: todasLasBandas ? "var(--tinta)" : "var(--linea)",
+                background: todasLasBandas ? "var(--tinta)" : "transparent",
+                color: "var(--superficie)",
+              }}
+            >
+              {todasLasBandas ? "✓" : ""}
+            </span>
+            <span>
+              Ver todas las intensidades.{" "}
+              {todasLasBandas ? (
+                <>
+                  <span className="num">{miles(fueraDeBanda)}</span> sedes caen
+                  fuera de las bandas encendidas y se dibujan atenuadas.
+                </>
+              ) : (
+                <>
+                  Hay <span className="num">{miles(fueraDeBanda)}</span> sedes
+                  con reporte fuera de las bandas encendidas que ahora no se
+                  dibujan.
+                </>
+              )}
+            </span>
+          </button>
+        </div>
       )}
 
       {abierta && (

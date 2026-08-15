@@ -167,6 +167,25 @@ export type Capas = {
    * pinta en un mapa de daños hasta que se pida, y la que tiene foto
    * emparejada pero nadie evaluo, tampoco: ninguna de las dos afirma daño. */
   estadosDano: EstadoDano[];
+  /** Si la capa de daños ignora el recorte de intensidad.
+   *
+   * Apagado, que es como abre, un punto de daño solo se dibuja si su sede cae en
+   * las bandas encendidas. Es lo que hace que el mapa cuente una sola cosa: la
+   * mancha de intensidad, las escuelas y los reportes hablan del mismo
+   * territorio, y el número de la tarjeta cuadra con lo que se ve.
+   *
+   * Encendido, se dibujan todos. Existe porque el reporte no es una salida del
+   * modelo, es una fuente afirmando que esa escuela se dañó, y hay 91 sedes con
+   * reporte fuera de las dos bandas con las que abre el visor. Cinco de ellas ni
+   * siquiera tienen banda, porque caen fuera de la grilla del ShakeMap. Sin esta
+   * opción no había ningún camino para llegar a ellas.
+   *
+   * Va apagado por defecto y no al revés. Estuvo al revés un rato y no funcionó:
+   * los puntos aparecían sobre el mapa base pelado, sin mancha debajo, y eso no
+   * se lee como "aquí hay un reporte que el modelo no explica", se lee como que
+   * el mapa está mal dibujado. Ver la opción "todas las intensidades" en la
+   * tarjeta de daños. */
+  danosTodasLasBandas: boolean;
 };
 
 export const CAPAS_INICIALES: Capas = {
@@ -175,6 +194,7 @@ export const CAPAS_INICIALES: Capas = {
   reportes: true,
   huellas: true,
   estadosDano: ["colapso", "dano"],
+  danosTodasLasBandas: false,
 };
 
 /** El color dice lo que pregunta la pestana activa, y nada mas.
@@ -662,8 +682,17 @@ export default function Mapa({
     // El filtro por estado es lo que separa "que encontraron" de "si fueron".
     // `sin_dano` nunca entra en estas dos capas: tiene la suya, hueca, para que
     // no se lea como afectacion.
-    const filtroEstado = (estados: EstadoDano[]): Expr =>
-      ["in", ["get", "estado"], ["literal", estados]] as Expr;
+    // El estado y el recorte de intensidad se piden a la vez. Con
+    // `danosTodasLasBandas` apagado el punto tiene que cumplir las dos cosas;
+    // encendido, solo el estado, y el que queda fuera del recorte se dibuja
+    // atenuado en vez de desaparecer.
+    const filtroEstado = (estados: EstadoDano[], todas: boolean): Expr => {
+      const porEstado: Expr =
+        ["in", ["get", "estado"], ["literal", estados]] as Expr;
+      return todas
+        ? porEstado
+        : (["all", porEstado, ["get", "en_seleccion"]] as Expr);
+    };
     const conDano = (c: Capas): EstadoDano[] =>
       c.estadosDano.filter((e) => e !== "sin_dano");
 
@@ -682,7 +711,7 @@ export default function Mapa({
       type: "symbol",
       source: "danos",
       minzoom: ZOOM_PIN,
-      filter: filtroEstado(conDano(d.capas)),
+      filter: filtroEstado(conDano(d.capas), d.capas.danosTodasLasBandas),
       layout: {
         visibility: visible(d.capas.reportes),
         "icon-image": [
@@ -708,7 +737,7 @@ export default function Mapa({
       type: "circle",
       source: "danos",
       maxzoom: ZOOM_PIN,
-      filter: filtroEstado(conDano(d.capas)),
+      filter: filtroEstado(conDano(d.capas), d.capas.danosTodasLasBandas),
       layout: { visibility: visible(d.capas.reportes) },
       paint: {
         "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 5, 14, 9],
@@ -730,7 +759,8 @@ export default function Mapa({
       type: "circle",
       source: "danos",
       filter: filtroEstado(
-        d.capas.estadosDano.includes("sin_dano") ? ["sin_dano"] : []),
+        d.capas.estadosDano.includes("sin_dano") ? ["sin_dano"] : [],
+        d.capas.danosTodasLasBandas),
       layout: { visibility: visible(d.capas.reportes) },
       paint: {
         "circle-radius": [
@@ -1001,12 +1031,17 @@ export default function Mapa({
       // y volver a construir el GeoJSON en cada casilla haria parpadear el mapa.
       const sinDano = capas.estadosDano.includes("sin_dano");
       const conDanoAhora = capas.estadosDano.filter((e) => e !== "sin_dano");
-      m.setFilter("danos-pin",
-        ["in", ["get", "estado"], ["literal", conDanoAhora]]);
-      m.setFilter("danos-punto",
-        ["in", ["get", "estado"], ["literal", conDanoAhora]]);
-      m.setFilter("danos-sin",
-        ["in", ["get", "estado"], ["literal", sinDano ? ["sin_dano"] : []]]);
+      const todas = capas.danosTodasLasBandas;
+      // El recorte de intensidad viaja pegado al estado, en el mismo filtro. Es
+      // por lo mismo que los estados no rehacen la fuente: son 189 puntos y
+      // reconstruir el GeoJSON al tocar una casilla hace parpadear el mapa.
+      const conRecorte = (estados: EstadoDano[]): Expr => {
+        const e: Expr = ["in", ["get", "estado"], ["literal", estados]] as Expr;
+        return todas ? e : (["all", e, ["get", "en_seleccion"]] as Expr);
+      };
+      m.setFilter("danos-pin", conRecorte(conDanoAhora));
+      m.setFilter("danos-punto", conRecorte(conDanoAhora));
+      m.setFilter("danos-sin", conRecorte(sinDano ? ["sin_dano"] : []));
       ver("huellas-relleno", capas.huellas);
       ver("huellas-linea", capas.huellas);
     });
