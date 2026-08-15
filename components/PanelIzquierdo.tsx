@@ -27,6 +27,7 @@ import {
   NOMBRE_VIGENCIA,
   NOMBRE_ZONA,
   TONO_IVID,
+  FUENTES_DEL_VISOR,
   horaLocal,
   miles,
 } from "@/lib/datos";
@@ -36,15 +37,22 @@ import {
   EXPLICACION_MMI,
   FUENTE_MMI,
   GRAVEDAD,
+  NOMBRE_EMISOR,
   NOMBRE_ESTADO,
   NOMBRE_FUENTE,
+  NOMBRE_SUBTIPO,
+  PRECEDENCIA_FUENTE,
+  SUBTIPOS_POR_ESTADO,
+  reportePorSede,
 } from "@/lib/tipos";
 import type {
   Dano,
+  EmisorDano,
   EstadoDano,
   Evento,
   Filtros,
   FuenteDano,
+  MetaMen,
   Reporte,
   Tema,
 } from "@/lib/tipos";
@@ -70,6 +78,13 @@ type Props = {
    *  hay forma de dibujar. Ya no es "las que la selección deja fuera": la
    *  selección dejó de tapar reportes. */
   danosFuera: number;
+  /** De cuándo es la capa del MEN que se está dibujando. Nulo si el archivo de
+   *  daños todavía no la trae. */
+  metaMen: MetaMen | null;
+  /** La marca de la última edición del MEN, solo cuando es posterior a nuestra
+   *  descarga. Nulo significa que estamos al día o que el servicio no contestó,
+   *  y en los dos casos la pantalla no dice nada. */
+  edicionMen: number | null;
   onIrASede: (dane: string) => void;
   onExportar: () => void;
   /** Cuántas sedes del país entero encuestó el FFIE. */
@@ -153,8 +168,9 @@ function TarjetaEvento({ evento }: Props) {
           <h1 className="text-sm font-semibold tracking-wide">
             VISOR ESCOLAR DE EMERGENCIA
             <Info
-              texto="Ubica las sedes educativas oficiales de Colombia sobre la intensidad que el sismo del 10 de agosto de 2026 alcanzó en cada punto. Encima marca los reportes de daño de tres emisores: la ciudadanía por ChatMap de HOT, la prensa y los boletines oficiales, todos revisados uno por uno. Y de cada sede muestra cómo estaba su infraestructura antes del sismo, según la encuesta del FFIE y el registro C-600 del DANE. Ninguna sede de esta pantalla tiene inspección técnica oficial."
+              texto={FUENTES_DEL_VISOR}
               tono="var(--cima)"
+              ancho
             />
           </h1>
           <p className="text-xs" style={{ color: "var(--tinta-3)" }}>
@@ -232,11 +248,18 @@ function TarjetaDanos({
   reportes,
   danos,
   danosFuera,
+  metaMen,
+  edicionMen,
   onIrASede,
 }: Props) {
   // Recogida al abrir: la primera pantalla tiene que dejar ver el mapa, y quien
   // llega buscando los reportes los despliega de un clic.
   const [abierta, setAbierta] = useState(false);
+  // El desglose de colapso abre plegado. La distinción entre parcial y total
+  // importa para decidir a dónde ir primero, pero son 120 sedes contra mil de
+  // daño: desplegada por defecto, el filtro más fino de la pantalla ocuparía
+  // el mismo espacio que el más grueso y la tarjeta se leería densa.
+  const [desglosado, setDesglosado] = useState<EstadoDano | null>(null);
   // "si" sin tilde es el valor que guarda el CSV de curaduria: es un codigo,
   // no prosa, y cambiarlo romperia las filas ya revisadas.
   const pendientes = reportes.filter((r) => !r.es_escuela.trim());
@@ -267,15 +290,77 @@ function TarjetaDanos({
     || (d.banda != null && filtros.bandas.includes(d.banda));
   const danosDibujados = danos.filter(enBanda);
 
-  const porFuente = (f: FuenteDano) => {
-    const peor = new Map<string, Dano>();
-    for (const d of danosDibujados) {
-      if (d.fuente !== f) continue;
-      const y = peor.get(d.dane);
-      if (!y || GRAVEDAD[d.estado] > GRAVEDAD[y.estado]) peor.set(d.dane, d);
-    }
-    return [...peor.values()];
+  const porFuente = (f: FuenteDano) =>
+    [...reportePorSede(danosDibujados.filter((d) => d.fuente === f)).values()];
+
+  // Igual que `porFuente` pero dentro de la fuente oficial, que tiene dos
+  // emisores. Se cuentan aparte porque MEN y BID no dicen lo mismo de las mismas
+  // sedes y sumarlos borraria la discrepancia.
+  const porEmisor = (e: EmisorDano) =>
+    [...reportePorSede(danosDibujados.filter((d) => d.emisor === e)).values()];
+
+  // Las sedes que reportan MEN y BID a la vez. La tarjeta las cuenta una vez y
+  // el desglose las cuenta en las dos lineas, asi que sin decirlo el desglose
+  // suma mas que su propio encabezado. Hoy son cuatro, y en dos de ellas los dos
+  // emisores no dicen lo mismo: en Riosucio el PTIES las cerro sin daño y el MEN
+  // las pone en afectacion parcial.
+  /** Lo que aporta una fuente que ninguna de mas peso ya cubre.
+   *
+   * La tarjeta de noticias contaba sus 173 sedes, y de esas 71 las reporta
+   * tambien el MEN, que es quien pinta el punto. Ese numero decia entonces
+   * cuantas sedes salieron en prensa, que es una pregunta sobre los medios y no
+   * sobre el terreno. La pregunta util es que escuelas conocemos solo por la
+   * prensa, porque son las que el reporte oficial todavia no ha visitado.
+   *
+   * Se mide contra las fuentes de mas precedencia, no contra el MEN a secas: es
+   * la misma regla que decide quien pinta, asi que las propias de cada bloque no
+   * se solapan entre si y suman exactamente las sedes distintas.
+   */
+  const aporte = (f: FuenteDano) => {
+    const mias = new Set(
+      danosDibujados.filter((d) => d.fuente === f).map((d) => d.dane));
+    const mando = PRECEDENCIA_FUENTE[f] ?? 0;
+    const cubiertas = new Set(
+      danosDibujados
+        .filter((d) => (PRECEDENCIA_FUENTE[d.fuente] ?? 0) > mando
+          && mias.has(d.dane))
+        .map((d) => d.dane));
+    const enMen = new Set(
+      danosDibujados.filter((d) => d.emisor === "MEN").map((d) => d.dane));
+    return {
+      propias: mias.size - cubiertas.size,
+      cubiertas: cubiertas.size,
+      // Hoy las 71 que le quita el bloque de noticias son todas del MEN. Se
+      // comprueba en vez de suponerlo: si alguna llegara a estar solo en el
+      // reporte del BID, el rotulo diria MEN de una sede que el MEN no nombra.
+      todasDelMen: [...cubiertas].every((k) => enMen.has(k)),
+    };
   };
+
+  const sedesEnAmbosOficiales = (() => {
+    const men = new Set(porEmisor("MEN").map((d) => d.dane));
+    return porEmisor("BID").filter((d) => men.has(d.dane)).length;
+  })();
+
+  // En cuanto se pasan los bloques de fuente respecto de las sedes distintas.
+  //
+  // Los bloques cuentan sedes por fuente, asi que una sede que reportan el MEN y
+  // una noticia esta en los dos y sus numeros suman mas que las sedes distintas.
+  // Hasta que entro la capa del MEN el solape era de una sola sede y la suma
+  // parecia cuadrar por casualidad.
+  //
+  // Se cuenta el exceso y no cuantas sedes se repiten, que no es lo mismo: una
+  // sede que esta en las tres fuentes se repite una vez y sobra dos. Hoy hay
+  // exactamente una asi, la Anexa al Carrasquilla de Quibdo, y contando sedes
+  // repetidas la resta se quedaba corta en uno.
+  const excesoDeLosBloques = (() => {
+    const cuantas = new Map<string, Set<string>>();
+    for (const d of danosDibujados) {
+      if (!cuantas.has(d.dane)) cuantas.set(d.dane, new Set());
+      cuantas.get(d.dane)!.add(d.fuente);
+    }
+    return [...cuantas.values()].reduce((a, s) => a + s.size - 1, 0);
+  })();
   const sedesDe = (ds: Dano[]) => ds.length;
   const matriculaDe = (ds: Dano[]) => ds.reduce((a, d) => a + d.matricula, 0);
   const marcado = (e: EstadoDano) => capas.estadosDano.includes(e);
@@ -285,24 +370,25 @@ function TarjetaDanos({
     onCapas({ ...capas, estadosDano: prendido ? resto : [...resto, ...es] });
   };
 
+  // Una sede, el reporte que la pinta, para poder contar por casilla sin que una
+  // sede con dos reportes cuente dos veces.
+  const peorPorSede = (ds: Dano[]) => [...reportePorSede(ds).values()];
+  const peores = peorPorSede(danosDibujados);
+
   // El numero del encabezado cuenta exactamente los puntos que hay en el mapa,
   // ni uno mas. Si contara otra cosa, quien cuente los puntos creeria que le
   // faltan. Por eso mira las casillas: una sede cuyo estado esta desmarcado no
   // se dibuja y no se cuenta.
-  const sedesConReporte = new Set(
-    danosDibujados.filter((d) => marcado(d.estado)).map((d) => d.dane)).size;
-
-  // Una sede, su estado mas grave, para poder contar por casilla sin que una
-  // sede con dos reportes cuente dos veces.
-  const peorPorSede = (ds: Dano[]) => {
-    const peor = new Map<string, Dano>();
-    for (const d of ds) {
-      const y = peor.get(d.dane);
-      if (!y || GRAVEDAD[d.estado] > GRAVEDAD[y.estado]) peor.set(d.dane, d);
-    }
-    return [...peor.values()];
-  };
-  const peores = peorPorSede(danosDibujados);
+  //
+  // Se cuenta sobre `peores`, o sea sobre el reporte que gana la sede, y no
+  // sobre todos sus reportes. Mientras mando la gravedad las dos formas daban lo
+  // mismo, porque el ganador era siempre el mas grave: si algun reporte era
+  // colapso o daño, el ganador tambien lo era. Con la primacia de la fuente eso
+  // dejo de cumplirse. La Sultana y San Juan Bautista de La Salle, en Manizales,
+  // las pinta el MEN como sin daño y ademas tienen una noticia que afirma daño:
+  // contando por reporte suelto entraban al total, y el mapa dibujaba dos puntos
+  // menos que los que decia el encabezado.
+  const sedesConReporte = peores.filter((d) => marcado(d.estado)).length;
   // Sin recortar, que es contra lo que se mide cuanto se esta dejando fuera.
   const peoresTodos = peorPorSede(danos);
   // El numero de cada casilla cuenta lo que hay dentro del recorte, marcada o
@@ -316,6 +402,22 @@ function TarjetaDanos({
   // Cuantos quedan fuera del recorte se dice aparte, en la casilla de ver todas
   // las sedes reportadas, que es donde se puede hacer algo al respecto.
   const nColapso = peores.filter((d) => d.estado === "colapso").length;
+  // Los subtipos se cuentan sobre `peores`, igual que la casilla que los
+  // agrupa, para que el desglose sume exactamente lo que dice su casilla.
+  const nPorSubtipo = (t: string) =>
+    peores.filter((d) => (d.subtipo ?? "") === t).length;
+  const subtipoMarcado = (t: string) => capas.subtipos.includes(t);
+  const alternaSubtipo = (estado: EstadoDano, t: string) => {
+    const prendido = subtipoMarcado(t);
+    const resto = capas.subtipos.filter((x) => x !== t);
+    // No se puede apagar el último de un estado: sin ningún subtipo encendido su
+    // casilla quedaría marcada y sin pintar nada, que se lee como un error del
+    // mapa y no como un filtro. Apagar el estado entero es lo que hace la
+    // casilla de arriba, y ya existe.
+    const hermanos = SUBTIPOS_POR_ESTADO[estado] ?? [];
+    if (prendido && !hermanos.some((h) => h !== t && resto.includes(h))) return;
+    onCapas({ ...capas, subtipos: prendido ? resto : [...resto, t] });
+  };
   const nDano = peores.filter((d) => d.estado === "dano").length;
   const nSinDano = peores.filter((d) => d.estado === "sin_dano").length;
   const nSinVerificar = peores.filter(
@@ -403,13 +505,18 @@ function TarjetaDanos({
           nombre="Colapso"
           n={nColapso}
           nota="la fuente afirma que la edificación se vino abajo, entera o en parte"
+          onDesglose={() =>
+            setDesglosado(desglosado === "colapso" ? null : "colapso")}
+          desglosado={desglosado === "colapso"}
         />
         <Casilla
           activa={marcado("dano")}
           onAlternar={() => alternar(["dano"])}
           nombre="Con daño"
           n={nDano}
-          nota="daño declarado por alguna de las tres fuentes, sin llegar a colapso"
+          nota="daño declarado por alguna de las fuentes, sin llegar a colapso"
+          onDesglose={() => setDesglosado(desglosado === "dano" ? null : "dano")}
+          desglosado={desglosado === "dano"}
         />
         <Casilla
           activa={marcado("sin_dano")}
@@ -431,6 +538,37 @@ function TarjetaDanos({
           </span>
         )}
       </div>
+
+      <AvisoMen edicion={edicionMen} />
+
+      {/* El desglose de la casilla abierta. Sangrado y en tono apagado: es un
+          filtro dentro de otro, y tiene que leerse como una rama de la casilla
+          de arriba y no como una casilla más al mismo nivel.
+
+          Solo uno a la vez. Con los dos desplegados son ocho pastillas en dos
+          filas debajo de cuatro, y la tarjeta deja de leerse: quien abre el
+          desglose de daño está mirando el daño, no las dos cosas.
+
+          "Sin especificar" no es un descarte ni una categoría floja: son los
+          reportes de prensa y del PTIES, que afirman colapso o daño y no
+          precisan más. Solo el MEN precisa. Sin esa pastilla, abrir el desglose
+          habría borrado del mapa esos casos sin que nadie lo pidiera. */}
+      {desglosado && (
+        <div className="flex flex-wrap items-center gap-1.5 px-4 pb-2 pl-8">
+          {(SUBTIPOS_POR_ESTADO[desglosado] ?? []).map((t) => (
+            <Casilla
+              key={t}
+              activa={marcado(desglosado) && subtipoMarcado(t)}
+              onAlternar={() => alternaSubtipo(desglosado, t)}
+              nombre={NOMBRE_SUBTIPO[t]}
+              n={nPorSubtipo(t)}
+              nota={t.endsWith("_sd")
+                ? "la fuente lo afirma sin precisar más. Solo el MEN hace esta distinción."
+                : `el MEN clasifica la sede como ${NOMBRE_SUBTIPO[t]}`}
+            />
+          ))}
+        </div>
+      )}
 
       {/* La opcion de soltar el recorte de intensidad, pegada al numero que la
           justifica. Va aqui y no en la tarjeta de capas porque es una decision
@@ -487,6 +625,7 @@ function TarjetaDanos({
             danos={porFuente("hot")}
             sedes={sedesDe(porFuente("hot"))}
             matricula={matriculaDe(porFuente("hot"))}
+            aporte={aporte("hot")}
             onIrASede={onIrASede}
             nota="Fotografías enviadas por WhatsApp, recogidas con el Humanitarian OpenStreetMap Team (HOT) y curadas una por una contra el directorio oficial. Aparecer aquí significa que una persona verificó que la fotografía corresponde a esa sede. No significa que la sede esté dañada."
             vacio={
@@ -508,9 +647,15 @@ function TarjetaDanos({
           />
 
           {/* El canal de reporte es el de HOT, no uno propio. Duplicarlo daria
-              una segunda cola que nadie revisa. Va del rojo de HOT y no del
-              turquesa de la interfaz: el boton pertenece a esa fuente, y el
-              color es lo que lo dice sin tener que explicarlo. */}
+              una segunda cola que nadie revisa. Va del color de HOT y no del
+              acento de la interfaz: el boton pertenece a esa fuente, y el color
+              es lo que lo dice sin tener que explicarlo.
+
+              Desde el 14 de agosto de 2026 ese color es el turquesa, que antes
+              era el rojo. Queda mas cerca del turquesa de CIMA de la interfaz
+              (#60bfb9) de lo que estaba el rojo, pero no se confunden: este es
+              mucho mas saturado y mas oscuro, y el de CIMA no aparece en esta
+              tarjeta. */}
           <a
             href="https://chatmap.hotosm.org/"
             target="_blank"
@@ -525,13 +670,28 @@ function TarjetaDanos({
             <span aria-hidden="true">↗</span>
           </a>
 
+          {/* Los dos emisores oficiales van desglosados y no sumados. No dicen
+              lo mismo de las mismas sedes: en Riosucio el PTIES cerró dos sedes
+              sin daño y la capa del MEN las declara en afectación parcial.
+              Sumarlos borraría esa discrepancia, que es información. */}
           <BloqueFuente
             fuente="oficial"
             danos={porFuente("oficial")}
             sedes={sedesDe(porFuente("oficial"))}
             matricula={matriculaDe(porFuente("oficial"))}
             onIrASede={onIrASede}
-            nota="Reporte del equipo PTIES con corte al 10 de agosto. Falta la validación puntual de las sedes."
+            desglose={(["MEN", "BID"] as EmisorDano[]).map((e) => ({
+              clave: e,
+              nombre: NOMBRE_EMISOR[e] ?? e,
+              sedes: sedesDe(porEmisor(e)),
+              matricula: matriculaDe(porEmisor(e)),
+            }))}
+            // Sin esto los dos emisores suman más que el total de la tarjeta y
+            // no hay dónde leer por qué. Son las sedes que reportan los dos, y
+            // en la tarjeta se cuentan una sola vez.
+            solape={sedesEnAmbosOficiales}
+            nota="Dos emisores. El MEN publica una capa con el estado físico declarado sede por sede, con el código DANE ya puesto. El BID aporta el reporte del equipo PTIES con corte al 10 de agosto, que nombra instituciones y cuyas sedes se resolvieron una por una."
+            pie={<PieMen meta={metaMen} edicion={edicionMen} />}
             vacio="Todavía no hay ningún reporte oficial cargado."
           />
 
@@ -540,11 +700,29 @@ function TarjetaDanos({
             danos={porFuente("noticia")}
             sedes={sedesDe(porFuente("noticia"))}
             matricula={matriculaDe(porFuente("noticia"))}
+            aporte={aporte("noticia")}
             onIrASede={onIrASede}
             nota="Declaraciones de autoridades recogidas por medios. Cada una guarda quién lo dijo, con nombre y cargo, la fecha y la cita textual. Es la única fuente que hasta hoy afirma el daño de una sede concreta."
             vacio="Todavía no hay ninguna noticia cargada."
           />
 
+          {/* Qué cuenta cada bloque. Sin esta línea el número entre paréntesis
+              no se entiende, y con él los tres bloques suman exactamente las
+              sedes distintas en vez de pasarse en 72, que es lo que hacían
+              cuando cada uno contaba todas las suyas. */}
+          {excesoDeLosBloques > 0 && (
+            <p
+              className="border-t pt-2 text-[11px] leading-relaxed"
+              style={{ borderColor: "var(--linea)", color: "var(--tinta-3)" }}
+            >
+              Cada bloque cuenta las sedes que aporta y que no cubre ya una
+              fuente de más peso; entre paréntesis, las suyas que sí. Una sede
+              que salió en prensa y que el MEN también reporta se cuenta en el
+              bloque oficial, que es quien pinta su punto. Así los tres bloques
+              suman las sedes distintas, y el encabezado de la tarjeta deja fuera
+              las que ninguna casilla marcada incluye.
+            </p>
+          )}
         </div>
       )}
     </Tarjeta>
@@ -564,6 +742,10 @@ function BloqueFuente({
   matricula,
   nota,
   vacio,
+  desglose,
+  solape,
+  aporte,
+  pie,
   onIrASede,
 }: {
   fuente: FuenteDano;
@@ -572,6 +754,22 @@ function BloqueFuente({
   matricula: number;
   nota: string;
   vacio: React.ReactNode;
+  /** Los emisores de esta fuente, cuando tiene más de uno. Va debajo del
+   *  encabezado y sin desplegar, porque decir de quién es cada mitad del número
+   *  no puede costar un clic. */
+  desglose?: { clave: string; nombre: string; sedes: number; matricula: number }[];
+  /** Cuántas sedes reportan más de un emisor de esta fuente. La tarjeta las
+   *  cuenta una vez y el desglose las cuenta en cada línea, así que el desglose
+   *  suma más que su encabezado y hay que decir por qué. */
+  solape?: number;
+  /** Cuántas sedes aporta esta fuente que ninguna de más peso ya cubre, y
+   *  cuántas de las suyas ya están en un reporte oficial. Cuando viene, el
+   *  encabezado muestra el aporte y deja el resto entre paréntesis: lo que
+   *  importa de la prensa es la escuela que solo ella conoce. */
+  aporte?: { propias: number; cubiertas: number; todasDelMen: boolean };
+  /** Lo que se dice al final, después de la lista. Hoy solo lo usa la fuente
+   *  oficial, para fechar la capa del MEN. */
+  pie?: React.ReactNode;
   onIrASede: (dane: string) => void;
 }) {
   const [abierto, setAbierto] = useState(false);
@@ -597,7 +795,14 @@ function BloqueFuente({
             {NOMBRE_FUENTE[fuente]}
           </span>
           <span className="num block text-xs" style={{ color: "var(--tinta-2)" }}>
-            {miles(sedes)} {sedes === 1 ? "sede" : "sedes"}
+            {miles(aporte ? aporte.propias : sedes)}{" "}
+            {(aporte ? aporte.propias : sedes) === 1 ? "sede" : "sedes"}
+            {aporte && aporte.cubiertas > 0 && (
+              <span style={{ color: "var(--tinta-3)" }}>
+                {" (+"}{miles(aporte.cubiertas)}{" con reporte "}
+                {aporte.todasDelMen ? "MEN" : "oficial"}{")"}
+              </span>
+            )}
             {" · "}
             {miles(matricula)} {matricula === 1 ? "estudiante" : "estudiantes"}
           </span>
@@ -610,6 +815,34 @@ function BloqueFuente({
           {abierto ? "▾" : "▸"}
         </button>
       </div>
+
+      {/* Fuera del plegado: quién emite cada parte del número es parte del
+          número, no un detalle que haya que ir a buscar. */}
+      {desglose && desglose.some((x) => x.sedes > 0) && (
+        <div className="mb-2 ml-4.5 flex flex-col gap-0.5">
+          {desglose.filter((x) => x.sedes > 0).map((x) => (
+            <span
+              key={x.clave}
+              className="num text-[11px]"
+              style={{ color: "var(--tinta-3)" }}
+            >
+              <span className="font-medium">{x.clave}</span>{" "}
+              {miles(x.sedes)} {x.sedes === 1 ? "sede" : "sedes"}
+              {" · "}
+              {miles(x.matricula)}{" "}
+              {x.matricula === 1 ? "estudiante" : "estudiantes"}
+            </span>
+          ))}
+          {solape != null && solape > 0 && (
+            <span className="text-[11px]" style={{ color: "var(--tinta-3)" }}>
+              <span className="num">{miles(solape)}</span>{" "}
+              {solape === 1
+                ? "sede la reportan los dos, y arriba cuenta una vez"
+                : "sedes las reportan los dos, y arriba cuentan una vez"}
+            </span>
+          )}
+        </div>
+      )}
 
       {abierto && (
         <>
@@ -644,10 +877,91 @@ function BloqueFuente({
               ))}
             </div>
           )}
+          {pie}
         </>
       )}
     </div>
   );
+}
+
+/** De cuándo es la capa del MEN, y si el MEN ya la editó después.
+ *
+ * Existe porque el mapa dibuja una copia congelada y no el servicio en vivo.
+ * Esa decisión es deliberada: si el visor consultara al MEN para pintarse, un
+ * cambio de esquema o una despublicación dejarían la pantalla sin capa en plena
+ * emergencia, y no quedaría registro de qué decía el reporte cada día. El precio
+ * de congelar es que la copia envejece, y este pie es lo que impide que
+ * envejezca en silencio.
+ *
+ * Cuando el servicio no contesta no se dibuja ningún aviso. Callar es correcto:
+ * no sabemos si hay desfase, y decir "puede que esté desactualizado" sin
+ * saberlo sería sembrar una duda que no viene de ningún dato.
+ */
+function PieMen({ meta, edicion }: {
+  meta: MetaMen | null;
+  edicion: number | null;
+}) {
+  if (!meta) return null;
+  return (
+    <p
+      className="mt-2 border-t pt-2 text-[11px] leading-relaxed"
+      style={{ borderColor: "var(--linea)", color: "var(--tinta-3)" }}
+    >
+      La capa del MEN es del{" "}
+      <span className="num">{fechaLarga(meta.fecha_capa)}</span> y cubre{" "}
+      <span className="num">{miles(meta.con_estado)}</span> sedes con estado
+      declarado sobre un universo priorizado de{" "}
+      <span className="num">{miles(meta.universo)}</span>.{" "}
+      <a
+        href={meta.tablero}
+        target="_blank"
+        rel="noreferrer"
+        className="underline"
+      >
+        Tablero del MEN ↗
+      </a>
+    </p>
+  );
+}
+
+/** El aviso de que la capa del MEN se quedó atrás.
+ *
+ * Va al nivel de la tarjeta y no dentro del bloque de la fuente oficial, que es
+ * donde vivía primero. Ahí quedaba a dos clics: desplegar la tarjeta y desplegar
+ * la fuente. Una advertencia de que lo que se está mirando ya no es lo último
+ * que dijo la fuente no puede estar escondida detrás de dos gestos.
+ *
+ * No ocupa espacio cuando no hay nada que decir, que es lo normal: solo aparece
+ * si el servicio contestó y contestó que hay algo más nuevo.
+ */
+function AvisoMen({ edicion }: { edicion: number | null }) {
+  if (edicion == null) return null;
+  return (
+    <p
+      className="mx-4 mb-2 rounded border px-2.5 py-1.5 text-[11px] leading-relaxed"
+      style={{
+        borderColor: COLOR_FUENTE.oficial,
+        color: COLOR_FUENTE.oficial,
+      }}
+    >
+      El MEN actualizó su capa el{" "}
+      <span className="num">
+        {fechaLarga(new Date(edicion).toISOString().slice(0, 10))}
+      </span>
+      , después de la descarga que dibuja este mapa. Lo que se ve todavía no
+      incluye ese cambio.
+    </p>
+  );
+}
+
+/** "2026-08-13" a "13 de agosto". El año sobra: todo este visor habla de un
+ *  solo evento y de los días que le siguieron. */
+function fechaLarga(iso: string): string {
+  const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+    "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+  const [, m, d] = iso.split("-");
+  if (!m || !d) return iso;
+  return `${Number(d)} de ${MESES[Number(m) - 1]}`;
 }
 
 /** Fuente, estado y matrícula, que es lo que se pidió que dijera cada fila.
@@ -1778,28 +2092,58 @@ function Gota({ color }: { color: string }) {
  *  que contradecia a las otras.
  */
 function Casilla({
-  activa, onAlternar, nombre, n, nota,
+  activa, onAlternar, nombre, n, nota, onDesglose, desglosado,
 }: {
   activa: boolean;
   onAlternar: () => void;
   nombre: string;
   n: number;
   nota: string;
+  /** Si esta casilla abre un desglose más fino. Lo usan "Colapso" y "Con
+   *  daño", que son los dos estados que el MEN precisa. */
+  onDesglose?: () => void;
+  desglosado?: boolean;
 }) {
+  // El chevron va dentro de la misma píldora pero como botón aparte. Anidar
+  // botones no es HTML válido y el navegador se queda con el de fuera, así que
+  // tocar el desglose habría apagado la casilla entera.
   return (
-    <button
-      onClick={onAlternar}
-      title={nota}
-      aria-pressed={activa}
-      className="flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px]"
+    <span
+      className="flex items-center rounded-full border text-[11px]"
       style={{
         borderColor: activa ? "var(--acento)" : "var(--linea)",
         color: activa ? "var(--tinta)" : "var(--tinta-3)",
         background: activa ? "var(--plano)" : "transparent",
       }}
     >
-      {nombre}
-      <span className="num" style={{ color: "var(--tinta-3)" }}>{miles(n)}</span>
-    </button>
+      <button
+        onClick={onAlternar}
+        title={nota}
+        aria-pressed={activa}
+        className={`flex items-center gap-1.5 py-0.5 pl-2.5 ${
+          onDesglose ? "pr-1" : "pr-2.5"}`}
+      >
+        {nombre}
+        <span className="num" style={{ color: "var(--tinta-3)" }}>
+          {miles(n)}
+        </span>
+      </button>
+      {onDesglose && (
+        <button
+          onClick={onDesglose}
+          className="py-0.5 pl-0.5 pr-1.5"
+          style={{ color: "var(--tinta-3)" }}
+          aria-expanded={desglosado}
+          aria-label={desglosado
+            ? `plegar el desglose de ${nombre.toLowerCase()}`
+            : `abrir el desglose de ${nombre.toLowerCase()}`}
+          title={desglosado
+            ? "plegar el desglose"
+            : "separar por la clasificación del MEN"}
+        >
+          {desglosado ? "▾" : "▸"}
+        </button>
+      )}
+    </span>
   );
 }

@@ -125,12 +125,21 @@ export type Reporte = {
  *  hot      Foto ciudadana por WhatsApp, curada una por una. Confirmar
  *           significa que alguien emparejo la foto con la sede, no que la sede
  *           este danada.
- *  oficial  Reporte del PTIES. Habla de instituciones, o sea de grupos de
- *           sedes, y no de un predio.
- *  noticia  Declaracion de una autoridad recogida por un medio. Es la unica que
- *           hasta hoy afirma dano de una sede con nombre propio.
+ *  oficial  Reporte de una entidad. Tiene dos emisores, que comparten tarjeta y
+ *           color y se separan por `emisor`: el MEN, con su capa publica, y el
+ *           BID, con el reporte del PTIES.
+ *  noticia  Declaracion de una autoridad recogida por un medio.
  */
 export type FuenteDano = "hot" | "oficial" | "noticia";
+
+/** Quien emite el reporte dentro de su fuente.
+ *
+ *  Existe porque `oficial` dejo de ser una sola entidad. MEN y BID no dicen lo
+ *  mismo de las mismas sedes: en Riosucio el PTIES cerro dos sedes sin dano y
+ *  la capa del MEN las declara en afectacion parcial. Fundirlos en un solo
+ *  rotulo borraria esa discrepancia, que es informacion.
+ */
+export type EmisorDano = "MEN" | "BID" | "HOT" | "";
 
 /** Los cuatro estados posibles, cerrados a proposito.
  *
@@ -178,7 +187,22 @@ export type Dano = {
   /** El reporte del que sale. Varias sedes pueden compartirlo. */
   reporte: string;
   fuente: FuenteDano;
+  emisor?: EmisorDano;
   estado: EstadoDano;
+  /** El desglose fino dentro del estado, que es lo que abren los botones de
+   *  colapso y de daño. Solo lo distingue el MEN. Vacio significa que ese estado
+   *  no tiene desglose (`sin_dano`, `sin_verificar`); las fuentes que afirman
+   *  colapso o daño sin precisar llevan `colapso_sd` y `dano_sd`. */
+  subtipo?: string;
+  /** La frase textual del MEN, sin traducir. Los cuatro estados del visor son
+   *  cerrados y el MEN usa ocho categorias, asi que esta es la unica forma de
+   *  que la ficha diga lo que dijo la fuente y no lo que nosotros entendimos. */
+  estado_men?: string;
+  /** La calificacion que el propio MEN le pone a su coordenada. */
+  confianza_geo_men?: string;
+  /** Si el punto se dibuja con la coordenada de la capa del MEN porque el
+   *  directorio no tiene la de esa sede. */
+  coord_del_men?: boolean;
   alcance: AlcanceDano;
   dane: string;
   sede: string;
@@ -212,9 +236,9 @@ export type Dano = {
   n_sedes_institucion?: number;
 };
 
-/** Del mas grave al menos grave. Cuando una sede tiene varios reportes, el mapa
- *  pinta el mas grave: un colapso no puede quedar tapado por el "sin dano" de
- *  otra fuente. */
+/** Del mas grave al menos grave. Ordena las listas que se leen de arriba abajo,
+ *  y desempata entre reportes de la misma fuente. Ya no decide sola quien pinta
+ *  la sede: para eso esta `mandaSobre`. */
 export const GRAVEDAD: Record<EstadoDano, number> = {
   colapso: 3,
   dano: 2,
@@ -222,11 +246,120 @@ export const GRAVEDAD: Record<EstadoDano, number> = {
   sin_dano: 0,
 };
 
+/** Quien manda cuando dos fuentes hablan de la misma sede.
+ *
+ *  Hasta el 14 de agosto de 2026 mandaba el estado mas grave, sin mirar quien
+ *  lo decia, y eso dejaba a una nota de prensa tapando el "sin afectacion" con
+ *  el que el MEN cerro esa misma sede despues de ir a mirarla. Ahora una
+ *  entidad que verifico pesa mas que un medio, y un medio mas que una foto
+ *  ciudadana que no afirma nada del edificio.
+ */
+export const PRECEDENCIA_FUENTE: Record<FuenteDano, number> = {
+  oficial: 2,
+  noticia: 1,
+  hot: 0,
+};
+
+/** Si el reporte `a` desplaza a `b` como el que pinta la sede.
+ *
+ *  Primero la fuente, y solo dentro de la misma fuente la gravedad. Vive aqui
+ *  porque cuatro sitios del visor deciden lo mismo (el mapa, las dos cuentas
+ *  del panel y la lista de sedes) y cuando la regla estaba escrita cuatro veces
+ *  bastaba con cambiar tres para que el mapa y el contador dejaran de coincidir.
+ *
+ *  Es la misma regla que aplica `scripts/27_danos_reportados.py` al armar el
+ *  archivo. Las dos tienen que decir lo mismo.
+ */
+export function mandaSobre(a: Dano, b: Dano): boolean {
+  const pa = PRECEDENCIA_FUENTE[a.fuente] ?? 0;
+  const pb = PRECEDENCIA_FUENTE[b.fuente] ?? 0;
+  if (pa !== pb) return pa > pb;
+  return GRAVEDAD[a.estado] > GRAVEDAD[b.estado];
+}
+
+/** El reporte que pinta cada sede, uno por codigo DANE. */
+export function reportePorSede(danos: Dano[]): Map<string, Dano> {
+  const manda = new Map<string, Dano>();
+  for (const d of danos) {
+    const y = manda.get(d.dane);
+    if (!y || mandaSobre(d, y)) manda.set(d.dane, d);
+  }
+  return manda;
+}
+
 export const NOMBRE_FUENTE: Record<FuenteDano, string> = {
   hot: "Registro fotográfico HOT",
-  oficial: "Reportes oficiales",
+  oficial: "Reportes oficiales (MEN y BID)",
   noticia: "Noticias",
 };
+
+/** Como se nombra cada emisor en pantalla. */
+export const NOMBRE_EMISOR: Record<string, string> = {
+  MEN: "Ministerio de Educación Nacional",
+  BID: "BID, reporte del PTIES",
+  HOT: "ChatMap (HOT)",
+};
+
+/** De cuando es la capa del MEN que dibuja el mapa, y donde vive el original.
+ *
+ *  Lo escribe `scripts/27_danos_reportados.py` al lado de los danos. Sirve para
+ *  dos cosas: fechar en pantalla lo que se esta viendo, y comparar contra el
+ *  servicio para avisar cuando el MEN edito despues de nuestra descarga.
+ */
+export type MetaMen = {
+  /** Ultima edicion de la capa segun el MEN, no el dia en que la bajamos. */
+  fecha_capa: string;
+  descargada: string;
+  last_edit_date_ms: number | null;
+  url_servicio: string;
+  tablero: string;
+  /** Las sedes del universo priorizado, con estado o sin el. */
+  universo: number;
+  /** Las que declaran algo distinto de "No aporta informacion". */
+  con_estado: number;
+};
+
+/** Los subtipos de cada estado, de mas grave a menos grave.
+ *
+ *  Es el orden en que hay que ir a mirar y el orden en que se dibujan las
+ *  pastillas. `_sd` va siempre al final: no es el caso menos grave, es el que no
+ *  se sabe, y ponerlo entre medias diria que ocupa un lugar en la escala.
+ *
+ *  La clave lleva el estado por delante a proposito. Sin eso "parcial" seria a
+ *  la vez un colapso parcial y una afectacion parcial, y la lista de subtipos
+ *  encendidos no podria distinguirlos: apagar uno apagaria el otro.
+ *
+ *  Solo `colapso` y `dano` tienen desglose. `sin_dano` y `sin_verificar` no lo
+ *  necesitan: no hay grados de "alguien fue y no encontro nada".
+ */
+export const SUBTIPOS_POR_ESTADO: Record<string, string[]> = {
+  colapso: ["colapso_total", "colapso_parcial", "colapso_sd"],
+  dano: ["dano_riesgo", "dano_parcial", "dano_menor", "dano_sin_definir",
+    "dano_sd"],
+};
+
+/** Todos los subtipos en una sola lista, que es como viaja el filtro. */
+export const SUBTIPOS = Object.values(SUBTIPOS_POR_ESTADO).flat();
+
+/** Como se llama cada subtipo en pantalla. Sale de la frase del MEN, acortada
+ *  para que quepa en una pastilla. */
+export const NOMBRE_SUBTIPO: Record<string, string> = {
+  colapso_total: "colapso total",
+  colapso_parcial: "colapso parcial",
+  colapso_sd: "sin especificar",
+  dano_riesgo: "riesgo inminente",
+  dano_parcial: "afectación parcial",
+  dano_menor: "afectación menor",
+  dano_sin_definir: "sin definir el impacto",
+  dano_sd: "sin especificar",
+};
+
+/** Lo que dice el globo del mapa y la ficha cuando hay subtipo. Para los `_sd`
+ *  no aporta nada sobre el estado, asi que se cae al nombre del estado. */
+export function nombreFino(estado: EstadoDano, subtipo?: string): string {
+  if (!subtipo || subtipo.endsWith("_sd")) return NOMBRE_ESTADO[estado];
+  return NOMBRE_SUBTIPO[subtipo] ?? NOMBRE_ESTADO[estado];
+}
 
 export const NOMBRE_ESTADO: Record<EstadoDano, string> = {
   colapso: "colapso",

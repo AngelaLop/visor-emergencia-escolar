@@ -6,13 +6,14 @@
  * informe, el problema esta aguas arriba y no aqui.
  */
 
-import { GRAVEDAD } from "./tipos";
+import { reportePorSede } from "./tipos";
 import type {
   ColeccionSedes,
   Dano,
   EstadoDano,
   Evento,
   Filtros,
+  MetaMen,
   RasgoSede,
   Reporte,
   Sede,
@@ -77,19 +78,49 @@ export async function cargaReportes(): Promise<Reporte[]> {
 }
 
 /** Las huellas de una sede, que solo existen para las que estan en MMI VI o mas. */
-/** Los daños reportados por las tres fuentes, ya unidos por el script 27.
+/** Los daños reportados por las fuentes, ya unidos por el script 27.
  *
  * Si el archivo no está, el visor sigue funcionando sin la capa. Es una capa
  * que se agrega sobre un mapa que ya respondía su pregunta sin ella.
+ *
+ * Devuelve también `men`, que es de cuándo es la capa del MEN que se está
+ * dibujando. Sin eso la pantalla no podría fechar lo que muestra, y un mapa de
+ * emergencia que no sabe de cuándo es su propia capa no sirve para decidir.
  */
-export async function cargaDanos(): Promise<Dano[]> {
+export async function cargaDanos(): Promise<{ danos: Dano[]; men: MetaMen | null }> {
   try {
     const r = await fetch("datos/danos.json");
-    if (!r.ok) return [];
+    if (!r.ok) return { danos: [], men: null };
     const d = await r.json();
-    return (d.danos ?? []) as Dano[];
+    return { danos: (d.danos ?? []) as Dano[], men: (d.men ?? null) as MetaMen | null };
   } catch {
-    return [];
+    return { danos: [], men: null };
+  }
+}
+
+/** Si el MEN editó su capa después de la descarga que dibuja el mapa.
+ *
+ * Es una sola consulta a la ficha del servicio, un par de kilobytes, y no baja
+ * ningún dato: solo pregunta por `editingInfo.lastEditDate`. El mapa nunca
+ * depende de que esta consulta responda. Si el MEN despublica la capa, cambia
+ * el esquema o simplemente no contesta, el visor sigue dibujando su snapshot y
+ * no avisa nada, que es el comportamiento correcto: el aviso es información
+ * adicional, no una condición para pintar.
+ *
+ * El servicio responde con `Access-Control-Allow-Origin: *`, así que la consulta
+ * sale directa del navegador y no hace falta pasarla por un proxy nuestro.
+ */
+export async function consultaEdicionMen(meta: MetaMen | null): Promise<number | null> {
+  if (!meta?.url_servicio || meta.last_edit_date_ms == null) return null;
+  try {
+    const r = await fetch(`${meta.url_servicio}?f=json`, { cache: "no-store" });
+    if (!r.ok) return null;
+    const d = await r.json();
+    const ultima = d?.editingInfo?.lastEditDate;
+    if (typeof ultima !== "number") return null;
+    return ultima > meta.last_edit_date_ms ? ultima : null;
+  } catch {
+    return null;
   }
 }
 
@@ -209,10 +240,19 @@ export function danosVisibles(danos: Dano[]): Dano[] {
  * Antes este conteo aplicaba el mismo piso de intensidad que la capa, así que
  * las 58 sedes bajo 5,5 no se dibujaban y tampoco aparecían aquí: no había
  * ningún lugar de la pantalla donde constara que existían.
+ *
+ * Se cuenta por sede y no por reporte, y una sede solo queda fuera cuando
+ * ninguno de sus reportes trae coordenada. La diferencia apareció con la capa
+ * del MEN: cinco sedes de Manizales que salieron en prensa no tienen coordenada
+ * en el directorio, y el MEN sí las ubica. Contando por reporte, esas cinco se
+ * seguían declarando no dibujables mientras el mapa las estaba dibujando.
  */
 export function danosFuera(danos: Dano[]): number {
+  const dibujables = new Set(
+    danos.filter((d) => d.lon != null && d.lat != null).map((d) => d.dane),
+  );
   return new Set(
-    danos.filter((d) => d.lon == null || d.lat == null).map((d) => d.dane),
+    danos.map((d) => d.dane).filter((k) => !dibujables.has(k)),
   ).size;
 }
 
@@ -245,12 +285,7 @@ export function sedesConDano(
   danos: Dano[],
   estados: EstadoDano[],
 ): RasgoSede[] {
-  const peor = new Map<string, Dano>();
-  for (const d of danos) {
-    if (d.lon == null || d.lat == null) continue;
-    const y = peor.get(d.dane);
-    if (!y || GRAVEDAD[d.estado] > GRAVEDAD[y.estado]) peor.set(d.dane, d);
-  }
+  const peor = reportePorSede(danos.filter((d) => d.lon != null && d.lat != null));
   const enColeccion = new Map(
     (col?.features ?? []).map((f) => [f.properties.dane, f] as const),
   );
@@ -600,3 +635,34 @@ export function horaLocal(isoUtc: string): string {
     minute: "2-digit",
   });
 }
+
+/** Las fuentes que usa el visor, para el botón del título.
+ *
+ * Vive aquí y no incrustada en el componente porque es un texto que se
+ * desactualiza solo: cada vez que entra una fuente nueva hay que tocarlo, y
+ * enterrado entre el JSX del encabezado nadie se acuerda. La última vez que pasó
+ * fue el 14 de agosto de 2026, cuando entró la capa del MEN y el botón siguió
+ * diciendo durante un rato que los emisores de reporte eran tres.
+ *
+ * Los números que aparecen aquí son los del archivo que dibuja esta pantalla. Si
+ * cambian allí hay que cambiarlos aquí, que es la deuda conocida de tener la
+ * cifra escrita en prosa.
+ */
+export const FUENTES_DEL_VISOR = `Ubica las 26.591 sedes educativas del área afectada sobre la intensidad que el sismo del 10 de agosto de 2026 alcanzó en cada punto, y encima marca lo que se ha reportado desde entonces. Ninguna sede de esta pantalla tiene inspección técnica oficial: todo lo que se ve es declarado, estimado o dicho por alguien.
+
+DÓNDE TEMBLÓ Y CUÁNTO
+ShakeMap del USGS, producto us6000tjl2, magnitud 7,4. Es un modelo, no una medición en cada escuela: interpola entre 2 estaciones y 239 reportes ciudadanos, así que la intensidad de una sede es una estimación de su entorno.
+
+QUÉ SE HA REPORTADO DESPUÉS DEL SISMO
+MEN. Capa pública del tablero del Ministerio de Educación, con el estado físico declarado sede por sede. Trae 1.184 sedes con estado sobre un universo priorizado de 9.273, en seis departamentos.
+BID. Reporte del equipo PTIES con corte al 10 de agosto.
+Prensa. Declaraciones de autoridades recogidas por medios, cada una con su autor, su cargo, su fecha y su cita textual.
+ChatMap (HOT). Fotografías enviadas por la ciudadanía por WhatsApp. Que una esté confirmada significa que alguien la emparejó con la sede, no que la sede esté dañada.
+
+CÓMO ESTABA LA ESCUELA ANTES DEL SISMO
+Encuesta del FFIE. Estado de techos, muros y pisos declarado por el rector, y las fotografías de campo. Es una declaración, no una inspección, y es anterior al sismo.
+C-600 del DANE, vigencia 2024. Energía, internet, matrícula y si la sede sigue operando.
+SIMAT 2022. El directorio de sedes, con su coordenada y su matrícula. Es el marco de las 52.823 sedes del país.
+CIMA. Control de calidad de la coordenada, que dice cuáles están verificadas contra terreno.
+Open Buildings de Google. La huella del edificio, para las sedes de las bandas altas.
+Índice de riqueza relativa de Meta. El entorno socioeconómico, en quintiles nacionales.`

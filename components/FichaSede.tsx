@@ -28,7 +28,13 @@ import {
   alumnos,
   miles,
 } from "@/lib/datos";
-import { GRAVEDAD, NOMBRE_ESTADO, NOMBRE_FUENTE } from "@/lib/tipos";
+import {
+  GRAVEDAD,
+  NOMBRE_EMISOR,
+  NOMBRE_FUENTE,
+  nombreFino,
+  PRECEDENCIA_FUENTE,
+} from "@/lib/tipos";
 import type { Dano, Reporte, Sede } from "@/lib/tipos";
 
 type Props = {
@@ -56,12 +62,17 @@ export default function FichaSede({ sede, reportes, danos, onCerrar }: Props) {
   const mios = reportes.filter(
     (r) => r.es_escuela === "si" && r.dane_asignado === sede.dane,
   );
-  // Del mas grave al menos grave. Si el alcalde dice que colapso y el reporte
-  // oficial dice que la institucion tuvo danos, lo primero que hay que leer es
-  // el colapso.
+  // Primero el que pinta el punto en el mapa, y despues los demas de mas grave
+  // a menos grave. El orden tiene que ser el mismo que decide el color: si el
+  // MEN cerro una sede como sin afectacion y una noticia la daba por dañada, el
+  // punto va azul oscuro y sin daño, y la ficha tiene que empezar por ahi. Con
+  // el orden anterior, que solo miraba la gravedad, la primera linea decia
+  // "daño" mientras el punto decia lo contrario.
   const misDanos = danos
     .filter((d) => d.dane === sede.dane)
-    .sort((a, b) => GRAVEDAD[b.estado] - GRAVEDAD[a.estado]);
+    .sort((a, b) =>
+      (PRECEDENCIA_FUENTE[b.fuente] ?? 0) - (PRECEDENCIA_FUENTE[a.fuente] ?? 0)
+      || GRAVEDAD[b.estado] - GRAVEDAD[a.estado]);
 
   return (
     <div
@@ -329,13 +340,38 @@ function Declaracion({ dano: d }: { dano: Dano }) {
       style={{ borderColor: color }}
     >
       <div className="flex items-baseline gap-1.5">
+        {/* El subtipo manda cuando lo hay. "riesgo inminente" y "afectación
+            menor" son los dos `daño`, y la diferencia entre ir hoy o ir la otra
+            semana está justo ahí: la cabecera no puede llamarlas igual. */}
         <span className="text-xs font-semibold uppercase tracking-wide" style={{ color }}>
-          {NOMBRE_ESTADO[d.estado]}
+          {nombreFino(d.estado, d.subtipo)}
         </span>
+        {/* En la fuente oficial manda el emisor y no el nombre de la fuente.
+            "Reportes oficiales (MEN y BID)" en la cabecera de una declaración
+            concreta diría que la afirman los dos, y son dos entidades que se
+            contradicen en algunas sedes. */}
         <span className="text-[10px]" style={{ color: "var(--tinta-3)" }}>
-          {NOMBRE_FUENTE[d.fuente]}, {d.fecha}
+          {d.emisor && NOMBRE_EMISOR[d.emisor]
+            ? NOMBRE_EMISOR[d.emisor]
+            : NOMBRE_FUENTE[d.fuente]}
+          , {d.fecha}
         </span>
       </div>
+
+      {/* La frase textual del MEN, y solo cuando dice más que el rótulo de
+          arriba. Se compara contra el nombre fino y no contra el del estado: si
+          la cabecera ya dice "afectación parcial", repetirlo entero sobra, pero
+          "riesgo inminente de colapso" sí añade sobre "riesgo inminente". */}
+      {d.estado_men
+        && d.estado_men.toLowerCase() !== nombreFino(d.estado, d.subtipo) && (
+        <p className="mt-0.5 text-xs" style={{ color: "var(--tinta-2)" }}>
+          El MEN la clasifica como{" "}
+          <span style={{ color, fontWeight: 500 }}>
+            {d.estado_men.toLowerCase()}
+          </span>
+          .
+        </p>
+      )}
 
       {deGrupo ? (
         <p className="mt-0.5 text-xs" style={{ color: "var(--tinta-2)" }}>
@@ -371,6 +407,18 @@ function Declaracion({ dano: d }: { dano: Dano }) {
       {d.impacto_ptie && (
         <p className="mt-0.5 text-[11px]" style={{ color: "var(--tinta-3)" }}>
           PTIES: {d.impacto_ptie}
+        </p>
+      )}
+      {/* De dónde salió el punto. Solo se dice cuando no salió del directorio,
+          que es el caso raro: son sedes reportadas sin coordenada propia, y
+          quien vaya a ir hasta allá tiene derecho a saber que la ubicación la
+          puso el MEN y con cuánta confianza. */}
+      {d.coord_del_men && (
+        <p className="mt-0.5 text-[11px]" style={{ color: "var(--tinta-3)" }}>
+          Ubicada con la coordenada del MEN, que el directorio no tiene.
+          {d.confianza_geo_men
+            ? ` Confiabilidad declarada: ${d.confianza_geo_men.toLowerCase()}.`
+            : ""}
         </p>
       )}
       {d.url && !d.url_foto && (

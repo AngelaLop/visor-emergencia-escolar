@@ -26,6 +26,7 @@ import {
   cargaDanos,
   cargaReportes,
   cargaSedes,
+  consultaEdicionMen,
   danosFuera,
   danosVisibles,
   filtra,
@@ -39,6 +40,7 @@ import type {
   Evento,
   Filtros,
   MapaBase,
+  MetaMen,
   Reporte,
   Sede,
   Tema,
@@ -64,6 +66,12 @@ export default function Pagina() {
   const [mapaBase, setMapaBase] = useState<MapaBase>("claro");
   const [reportes, setReportes] = useState<Reporte[]>([]);
   const [danos, setDanos] = useState<Dano[]>([]);
+  // De cuando es la capa del MEN que se esta dibujando, y si el MEN la edito
+  // despues. Lo segundo es una consulta al servicio del MEN que puede no
+  // responder: cuando falla se queda en null y la pantalla no dice nada, que es
+  // lo correcto. El aviso es informacion de mas, no una condicion para pintar.
+  const [metaMen, setMetaMen] = useState<MetaMen | null>(null);
+  const [edicionMen, setEdicionMen] = useState<number | null>(null);
   const [filtros, setFiltros] = useState<Filtros>(FILTROS_INICIALES);
   const [capas, setCapas] = useState<Capas>(CAPAS_INICIALES);
   const [seleccion, setSeleccion] = useState<string | null>(null);
@@ -90,13 +98,31 @@ export default function Pagina() {
         setBordeGrilla(b);
         setColombia(co);
         setReportes(r as Reporte[]);
-        setDanos(dn as Dano[]);
+        const d = dn as { danos: Dano[]; men: MetaMen | null };
+        setDanos(d.danos);
+        setMetaMen(d.men);
       })
       .catch((e: Error) => setError(e.message));
 
     const guardado = localStorage.getItem("visor.mapa") as MapaBase | null;
     if (guardado) setMapaBase(guardado);
   }, []);
+
+  // Le pregunta al MEN si edito su capa despues de la descarga que dibuja el
+  // mapa. Es lo unico que este visor consulta en vivo contra un servicio ajeno,
+  // y por eso se mantiene tan chico: pide la ficha del servicio, un par de
+  // kilobytes, y no baja ningun dato. El mapa ya esta dibujado cuando esto
+  // corre, asi que si el MEN no contesta no se pierde nada.
+  useEffect(() => {
+    if (!metaMen) return;
+    let vivo = true;
+    consultaEdicionMen(metaMen).then((x) => {
+      if (vivo) setEdicionMen(x);
+    });
+    return () => {
+      vivo = false;
+    };
+  }, [metaMen]);
 
   // El tema de la interfaz sigue al mapa base: con el mapa oscuro, un panel
   // blanco encandila, y con el mapa claro un panel negro no se lee.
@@ -328,6 +354,8 @@ export default function Pagina() {
         reportes={reportes}
         danos={danosEnMapa}
         danosFuera={nDanosFuera}
+        metaMen={metaMen}
+        edicionMen={edicionMen}
         onIrASede={irASede}
         onExportar={() => descarga(seleccionadas)}
         encuestadasPais={ENCUESTADAS_PAIS}

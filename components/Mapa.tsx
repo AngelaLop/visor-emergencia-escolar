@@ -37,7 +37,14 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef } from "react";
 
 import { cargaHuellas, miles, TONO_IVID } from "@/lib/datos";
-import { BANDAS, GRAVEDAD, NOMBRE_ESTADO, NOMBRE_FUENTE } from "@/lib/tipos";
+import {
+  BANDAS,
+  NOMBRE_EMISOR,
+  NOMBRE_FUENTE,
+  nombreFino,
+  reportePorSede,
+  SUBTIPOS,
+} from "@/lib/tipos";
 import type { EstadoDano } from "@/lib/tipos";
 import type {
   Dano,
@@ -90,24 +97,33 @@ export const REPORTE = "#b3261e";
  * nunca, asi que su ficha tendria dos naranjas al lado, uno diciendo que no se
  * sabe nada de ella y otro diciendo que se cayo.
  *
- * El magenta duro un tiempo en `noticia` y no servia. Contra el rojo de HOT, que
- * es el emisor con mas puntos en el mapa, los dos tonos tienen la misma
- * luminosidad y la misma temperatura, y a 6 pixeles de radio con halo blanco se
- * vuelven el mismo punto. Se noto mirando la leyenda, no el mapa: en la leyenda
- * estan uno al lado del otro y aun asi hay que acercarse.
+ * El magenta vuelve a `noticia` el 14 de agosto de 2026, y con el HOT pasa al
+ * turquesa. Es la vuelta atras de un cambio anterior, y conviene decir por que
+ * ese cambio dejo de tener sentido en vez de borrarlo.
  *
- * `noticia` pasa al turquesa, que es el unico hueco grande que queda. La rampa
- * de intensidad va de verde a rojo por el lado calido, asi que el cian no choca
- * con ninguna banda; contra el azul de `oficial` se separa por saturacion y
- * brillo, y contra el rojo de HOT esta en el lado opuesto del circulo.
+ * El magenta se habia retirado porque no se separaba del rojo de HOT: los dos
+ * tonos tienen la misma luminosidad y la misma temperatura, y a pocos pixeles de
+ * radio con halo blanco se volvian el mismo punto. Ese argumento se apoyaba en
+ * que HOT era entonces el emisor con mas puntos del mapa. Hoy HOT tiene una sola
+ * sede y el rojo sale de la capa: al cambiarlo por el turquesa, el par que
+ * chocaba deja de existir y el magenta queda libre para la fuente que si tiene
+ * volumen.
+ *
+ * Con lo que queda, los tres se separan bien. El magenta de `noticia` esta fuera
+ * de la rampa de intensidad, que no llega al morado por ningun lado. El turquesa
+ * de `hot` y el azul de `oficial` se separan por saturacion y brillo, y son el
+ * mismo par que ya convivia cuando el turquesa estaba en `noticia`.
+ *
+ * El rojo no desaparece del archivo: `REPORTE` sigue marcando el halo de
+ * coordenada sin verificar, que es otra capa y nunca se dibuja a la vez que esta.
  *
  * Los tres van con halo blanco porque sobre la mancha de intensidad cualquier
  * tono solido se pierde.
  */
 export const COLOR_FUENTE: Record<string, string> = {
-  hot: REPORTE,
+  hot: "#0aa2b8",
   oficial: "#1558a6",
-  noticia: "#0aa2b8",
+  noticia: "#b5177e",
 };
 
 /** El degradado de intensidad, de la banda mas lejana a la del epicentro. */
@@ -150,6 +166,32 @@ type Props = {
 
 type Expr = maplibregl.ExpressionSpecification;
 
+/** El filtro de la capa de daños: que estado, que subtipo de colapso y si se
+ *  respeta el recorte de intensidad.
+ *
+ *  Vive aqui arriba porque se pide en dos momentos distintos, al montar las
+ *  capas y al tocar una casilla, y hasta el 14 de agosto de 2026 cada momento
+ *  tenia su propia copia de la regla. Con dos copias, agregar el subtipo de
+ *  colapso en una sola habria dejado el mapa filtrando bien hasta el primer
+ *  clic y mal despues.
+ *
+ *  El subtipo vacio pasa siempre. Es el de `sin_dano` y `sin_verificar`, que no
+ *  tienen desglose: si se les exigiera estar en la lista de subtipos encendidos,
+ *  desaparecerian del mapa en cuanto alguien tocara cualquiera de los dos
+ *  desgloses. Los colapsos y daños de fuentes que no precisan no caen aqui, van
+ *  con `colapso_sd` y `dano_sd` y tienen su propia pastilla.
+ */
+function filtroDanos(estados: EstadoDano[], todas: boolean,
+                     subtipos: string[]): Expr {
+  const porEstado: Expr =
+    ["in", ["get", "estado"], ["literal", estados]] as Expr;
+  const porSubtipo: Expr = ["any",
+    ["==", ["get", "subtipo"], ""],
+    ["in", ["get", "subtipo"], ["literal", subtipos]]] as Expr;
+  const base: Expr = ["all", porEstado, porSubtipo] as Expr;
+  return todas ? base : (["all", base, ["get", "en_seleccion"]] as Expr);
+}
+
 /** Que se dibuja encima del mapa base. Lo maneja la tarjeta de capas. */
 export type Capas = {
   intensidad: boolean;
@@ -186,6 +228,22 @@ export type Capas = {
    * el mapa está mal dibujado. Ver la casilla "ver todas las sedes
    * reportadas" en la tarjeta de daños. */
   danosTodasLasBandas: boolean;
+  /** Cuales subtipos se dibujan, de los dos estados que tienen desglose.
+   *
+   * Es una sola lista y no una por estado porque las claves ya llevan el estado
+   * por delante: `colapso_parcial` y `dano_parcial` son distintas, asi que
+   * apagar una no toca la otra.
+   *
+   * Solo el MEN precisa el subtipo. Las demas fuentes dicen "colapso" o "daño" y
+   * ya, y esas van en `colapso_sd` y `dano_sd`, que son un subtipo mas de esta
+   * lista y no un descarte: sin ellos, abrir un desglose habria borrado del mapa
+   * los reportes de prensa sin que nadie lo pidiera.
+   *
+   * Abre con todos encendidos, o sea sin filtrar nada, y los desgloses viven
+   * plegados detras de su casilla. La distincion importa para decidir a donde ir
+   * primero, pero desplegada por defecto el filtro mas fino de la pantalla
+   * ocuparia mas espacio que el mas grueso. */
+  subtipos: string[];
 };
 
 export const CAPAS_INICIALES: Capas = {
@@ -195,6 +253,7 @@ export const CAPAS_INICIALES: Capas = {
   huellas: true,
   estadosDano: ["colapso", "dano"],
   danosTodasLasBandas: false,
+  subtipos: SUBTIPOS,
 };
 
 /** El color dice lo que pregunta la pestana activa, y nada mas.
@@ -378,11 +437,7 @@ export default function Mapa({
    * `sedes_evento.geojson`.
    */
   function rasgosDano() {
-    const peor = new Map<string, Dano>();
-    for (const d of datos.current.danos) {
-      const y = peor.get(d.dane);
-      if (!y || GRAVEDAD[d.estado] > GRAVEDAD[y.estado]) peor.set(d.dane, d);
-    }
+    const peor = reportePorSede(datos.current.danos);
     // Fuera las que no tienen coordenada. Son 5 sedes de Manizales cuyo
     // `lat`/`lon` es nulo en el directorio, y el script 27 ya las cuenta como
     // no dibujables. Sin este filtro entraban a la fuente GeoJSON con
@@ -398,7 +453,12 @@ export default function Mapa({
         sede: d.sede,
         mpio: d.mpio,
         fuente: d.fuente,
+        emisor: d.emisor ?? "",
         estado: d.estado,
+        // Vacio solo en los estados sin desglose. Lo que la fuente no precisa
+        // va en `colapso_sd` o `dano_sd`, que son un subtipo mas y no un dato
+        // faltante.
+        subtipo: d.subtipo ?? "",
         alcance: d.alcance,
         matricula: d.matricula,
         quien: d.quien,
@@ -686,13 +746,7 @@ export default function Mapa({
     // `danosTodasLasBandas` apagado el punto tiene que cumplir las dos cosas;
     // encendido, solo el estado, y el que queda fuera del recorte se dibuja
     // atenuado en vez de desaparecer.
-    const filtroEstado = (estados: EstadoDano[], todas: boolean): Expr => {
-      const porEstado: Expr =
-        ["in", ["get", "estado"], ["literal", estados]] as Expr;
-      return todas
-        ? porEstado
-        : (["all", porEstado, ["get", "en_seleccion"]] as Expr);
-    };
+    const filtroEstado = filtroDanos;
     const conDano = (c: Capas): EstadoDano[] =>
       c.estadosDano.filter((e) => e !== "sin_dano");
 
@@ -711,7 +765,8 @@ export default function Mapa({
       type: "symbol",
       source: "danos",
       minzoom: ZOOM_PIN,
-      filter: filtroEstado(conDano(d.capas), d.capas.danosTodasLasBandas),
+      filter: filtroEstado(conDano(d.capas), d.capas.danosTodasLasBandas,
+                           d.capas.subtipos),
       layout: {
         visibility: visible(d.capas.reportes),
         "icon-image": [
@@ -725,7 +780,9 @@ export default function Mapa({
         // en 0,7 a 1,1 y pesaba demasiado: en las zonas con muchos reportes los
         // pines se tapaban entre si y tapaban las sedes de debajo, que son el
         // dato de fondo del mapa. Un solo tamano para los cuatro estados.
-        "icon-size": ["interpolate", ["linear"], ["zoom"], 9, 0.62, 14, 0.95],
+        // Encogido en la misma proporcion que el punto, para que el cambio de
+        // punto a pin en el zoom 9 no se lea como un salto de tamaño.
+        "icon-size": ["interpolate", ["linear"], ["zoom"], 9, 0.46, 14, 0.78],
         "icon-anchor": "bottom",
         "icon-allow-overlap": true,
       },
@@ -737,14 +794,24 @@ export default function Mapa({
       type: "circle",
       source: "danos",
       maxzoom: ZOOM_PIN,
-      filter: filtroEstado(conDano(d.capas), d.capas.danosTodasLasBandas),
+      filter: filtroEstado(conDano(d.capas), d.capas.danosTodasLasBandas,
+                           d.capas.subtipos),
       layout: { visibility: visible(d.capas.reportes) },
       paint: {
-        "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 5, 14, 9],
+        // Bajados el 14 de agosto de 2026, con la entrada de la capa del MEN.
+        // Estaban dimensionados para 194 sedes con reporte y ahora son 1.080: a
+        // radio 5 con halo de 2 px, el Valle y el Eje Cafetero se cerraban en
+        // una costra azul donde no se distinguia ni cuantos puntos habia ni el
+        // degradado de intensidad que va debajo.
+        //
+        // El halo blanco se adelgaza pero no se quita. Es lo unico que separa
+        // estos puntos de la mancha de intensidad, y sin el se pierden justo en
+        // las bandas altas, que es donde hacen falta.
+        "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 3.2, 14, 6.5],
         "circle-color": porFuente as never,
         "circle-opacity": atenua(0.95, 0.35) as never,
         "circle-stroke-color": "#ffffff",
-        "circle-stroke-width": 2,
+        "circle-stroke-width": 1.3,
         "circle-stroke-opacity": atenua(1, 0.4) as never,
       },
     });
@@ -760,15 +827,17 @@ export default function Mapa({
       source: "danos",
       filter: filtroEstado(
         d.capas.estadosDano.includes("sin_dano") ? ["sin_dano"] : [],
-        d.capas.danosTodasLasBandas),
+        d.capas.danosTodasLasBandas, d.capas.subtipos),
       layout: { visibility: visible(d.capas.reportes) },
       paint: {
+        // Un pelo menor que el punto lleno, como estaba antes: el hueco no
+        // afirma daño y no tiene que competir con el que si.
         "circle-radius": [
-          "interpolate", ["linear"], ["zoom"], 5, 4.2, 14, 7.5,
+          "interpolate", ["linear"], ["zoom"], 5, 2.8, 14, 5.4,
         ] as never,
         "circle-color": "rgba(0,0,0,0)",
         "circle-stroke-color": porFuente as never,
-        "circle-stroke-width": 2,
+        "circle-stroke-width": 1.3,
         "circle-stroke-opacity": atenua(0.9, 0.35) as never,
       },
     });
@@ -785,10 +854,10 @@ export default function Mapa({
         // Casi el doble del radio del punto, para que el anillo se vea como
         // anillo y no como un borde grueso. Sigue al punto y por eso tampoco
         // cambia con el estado.
-        "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 9, 14, 15],
+        "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 6.5, 14, 11],
         "circle-color": "rgba(0,0,0,0)",
         "circle-stroke-color": porFuente as never,
-        "circle-stroke-width": 2.5,
+        "circle-stroke-width": 2,
         // El anillo no se atenua. Marca la sede que esta abierta en la ficha, y
         // esa se abre a proposito: si quien mira pidio ver una sede de una banda
         // apagada, el anillo tiene que decirle donde esta.
@@ -1031,14 +1100,10 @@ export default function Mapa({
       // y volver a construir el GeoJSON en cada casilla haria parpadear el mapa.
       const sinDano = capas.estadosDano.includes("sin_dano");
       const conDanoAhora = capas.estadosDano.filter((e) => e !== "sin_dano");
-      const todas = capas.danosTodasLasBandas;
-      // El recorte de intensidad viaja pegado al estado, en el mismo filtro. Es
-      // por lo mismo que los estados no rehacen la fuente: son 189 puntos y
-      // reconstruir el GeoJSON al tocar una casilla hace parpadear el mapa.
-      const conRecorte = (estados: EstadoDano[]): Expr => {
-        const e: Expr = ["in", ["get", "estado"], ["literal", estados]] as Expr;
-        return todas ? e : (["all", e, ["get", "en_seleccion"]] as Expr);
-      };
+      // El recorte de intensidad y el subtipo de colapso viajan pegados al
+      // estado, en el mismo filtro, y con la misma funcion que uso el montaje.
+      const conRecorte = (estados: EstadoDano[]): Expr =>
+        filtroDanos(estados, capas.danosTodasLasBandas, capas.subtipos);
       m.setFilter("danos-pin", conRecorte(conDanoAhora));
       m.setFilter("danos-punto", conRecorte(conDanoAhora));
       m.setFilter("danos-sin", conRecorte(sinDano ? ["sin_dano"] : []));
@@ -1145,8 +1210,16 @@ function seCortaEnElBorde(bandas: number[]): boolean {
  * vez de dejar creer que está en esta.
  */
 function textoDano(p: Record<string, unknown>): string {
-  const fuente = NOMBRE_FUENTE[p.fuente as keyof typeof NOMBRE_FUENTE] ?? "";
-  const estado = NOMBRE_ESTADO[p.estado as keyof typeof NOMBRE_ESTADO] ?? "";
+  // En la fuente oficial manda el emisor. "Reportes oficiales (MEN y BID)" en un
+  // globo de tres lineas diria que lo afirman los dos, y son dos entidades que
+  // se contradicen en algunas sedes.
+  const emisor = String(p.emisor ?? "");
+  const fuente = (emisor && NOMBRE_EMISOR[emisor])
+    ? NOMBRE_EMISOR[emisor]
+    : NOMBRE_FUENTE[p.fuente as keyof typeof NOMBRE_FUENTE] ?? "";
+  // El subtipo manda cuando lo hay: "riesgo inminente" dice mucho mas que
+  // "daño", que es lo que decia antes el globo de esas 107 sedes.
+  const estado = nombreFino(p.estado as EstadoDano, String(p.subtipo ?? ""));
   const n = Number(p.n_sedes_institucion ?? 1);
   const deGrupo = p.alcance !== "sede" && n > 1;
   const alcance = deGrupo
