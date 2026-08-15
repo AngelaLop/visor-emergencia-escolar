@@ -22,9 +22,14 @@
  *    vulnerabilidad en la vista de visitadas. Ninguno de esos tonos esta en la
  *    rampa de intensidad.
  *  - Los danos reportados van en tres colores, uno por emisor, y los tres con
- *    halo blanco, que ninguna banda tiene. El color dice quien lo afirma y el
- *    tamano cuanto afirma: son dos preguntas distintas y no se contestan con el
- *    mismo signo. Ver COLOR_FUENTE.
+ *    halo blanco, que ninguna banda tiene. El color dice quien lo afirma. Ver
+ *    COLOR_FUENTE.
+ *  - Todos los puntos de dano son del mismo tamano. El colapso se dibujo mas
+ *    grande durante un tiempo y no funciono: no se lee como "esto es mas grave",
+ *    se lee como que el mapa dibuja mal, porque no hay leyenda de tamanos y dos
+ *    puntos del mismo color a dos tamanos distintos parecen un defecto. Lo que
+ *    separa el colapso es la casilla "Colapso" de la tarjeta de danos, que aisla
+ *    los 21 casos, y el estado escrito en el globo y en la ficha.
  */
 
 import maplibregl from "maplibre-gl";
@@ -85,14 +90,24 @@ export const REPORTE = "#b3261e";
  * nunca, asi que su ficha tendria dos naranjas al lado, uno diciendo que no se
  * sabe nada de ella y otro diciendo que se cayo.
  *
- * Quedan el azul y el magenta, que no estan en ninguna banda. Los tres van con
- * halo blanco porque sobre la mancha de intensidad cualquier tono solido se
- * pierde.
+ * El magenta duro un tiempo en `noticia` y no servia. Contra el rojo de HOT, que
+ * es el emisor con mas puntos en el mapa, los dos tonos tienen la misma
+ * luminosidad y la misma temperatura, y a 6 pixeles de radio con halo blanco se
+ * vuelven el mismo punto. Se noto mirando la leyenda, no el mapa: en la leyenda
+ * estan uno al lado del otro y aun asi hay que acercarse.
+ *
+ * `noticia` pasa al turquesa, que es el unico hueco grande que queda. La rampa
+ * de intensidad va de verde a rojo por el lado calido, asi que el cian no choca
+ * con ninguna banda; contra el azul de `oficial` se separa por saturacion y
+ * brillo, y contra el rojo de HOT esta en el lado opuesto del circulo.
+ *
+ * Los tres van con halo blanco porque sobre la mancha de intensidad cualquier
+ * tono solido se pierde.
  */
 export const COLOR_FUENTE: Record<string, string> = {
   hot: REPORTE,
   oficial: "#1558a6",
-  noticia: "#b5177e",
+  noticia: "#0aa2b8",
 };
 
 /** El degradado de intensidad, de la banda mas lejana a la del epicentro. */
@@ -353,6 +368,7 @@ export default function Mapa({
     // no dibujables. Sin este filtro entraban a la fuente GeoJSON con
     // `coordinates: [null, null]`, que MapLibre acepta sin quejarse y deja el
     // punto en un sitio que no existe.
+    const bandas = datos.current.filtros.bandas;
     return [...peor.values()].filter((d) => d.lon != null && d.lat != null)
       .map((d) => ({
       type: "Feature" as const,
@@ -367,6 +383,20 @@ export default function Mapa({
         matricula: d.matricula,
         quien: d.quien,
         n_sedes_institucion: d.n_sedes_institucion ?? 1,
+        // Si la sede cae en las bandas de intensidad que estan encendidas.
+        //
+        // No filtra, atenua. Es el punto medio entre las dos cosas que la capa
+        // tiene que hacer a la vez y que se estorban: el reporte es evidencia y
+        // no puede desaparecer porque el modelo diga que ahi no sacudio fuerte,
+        // pero el control de bandas tiene que servir para algo, y con la capa
+        // ignorandolo por completo no habia forma de preguntar cuales de las
+        // sedes en MMI 6,0 y mas tienen reporte.
+        //
+        // Atenuado quiere decir que el punto sigue estando y se lee que esta
+        // fuera del recorte. Las sedes sin banda, que son las que caen fuera de
+        // la grilla del ShakeMap, nunca estan dentro: de esas el modelo no dice
+        // nada, asi que ninguna seleccion de bandas las incluye.
+        en_seleccion: d.banda != null && bandas.includes(d.banda),
       },
       geometry: {
         type: "Point" as const,
@@ -616,9 +646,9 @@ export default function Mapa({
       },
     });
 
-    // El color dice quien lo afirma y el tamano cuanto afirma. Son dos canales
-    // distintos a proposito: la pregunta "quien lo dijo" y la pregunta "que tan
-    // grave" no se contestan con el mismo signo.
+    // El color dice quien lo afirma, y es lo unico que dice el simbolo. La
+    // gravedad se pregunta con las casillas de la tarjeta de danos, no mirando
+    // el mapa: un canal que no tiene leyenda no comunica, confunde.
     const porFuente = [
       "match", ["get", "fuente"],
       "hot", COLOR_FUENTE.hot,
@@ -637,6 +667,16 @@ export default function Mapa({
     const conDano = (c: Capas): EstadoDano[] =>
       c.estadosDano.filter((e) => e !== "sin_dano");
 
+    // Lo que hace visible el recorte de intensidad sin borrar nada. Dentro de
+    // las bandas encendidas el punto va como siempre; fuera queda translucido y
+    // se lee como "esto existe y no es de lo que estas mirando ahora".
+    //
+    // Se atenua y no se vacia el relleno a proposito: el circulo hueco ya
+    // significa otra cosa en este mapa, es la sede que alguien reviso y encontro
+    // sin dano. Dos cosas distintas no pueden compartir el mismo simbolo.
+    const atenua = (dentro: number, fuera: number): Expr =>
+      ["case", ["get", "en_seleccion"], dentro, fuera] as Expr;
+
     m.addLayer({
       id: "danos-pin",
       type: "symbol",
@@ -652,20 +692,15 @@ export default function Mapa({
           "noticia", "pin-noticia",
           "pin-hot",
         ] as never,
-        // Un poco mas grande que el pin de la sede: es lo que hay que ver
-        // primero en la pantalla.
-        // La expresion de zoom tiene que ser la mas externa de la propiedad, asi
-        // que el tamano por estado va dentro de cada parada y no multiplicando
-        // por fuera. Envuelta en un `*`, MapLibre rechaza la propiedad entera y
-        // la capa se dibuja con el valor por defecto o no se dibuja.
-        "icon-size": [
-          "interpolate", ["linear"], ["zoom"],
-          9, ["match", ["get", "estado"], "colapso", 0.88, 0.7],
-          14, ["match", ["get", "estado"], "colapso", 1.38, 1.1],
-        ] as never,
+        // Apenas mas grande que el pin de la sede, que va de 0,55 a 0,9. Estuvo
+        // en 0,7 a 1,1 y pesaba demasiado: en las zonas con muchos reportes los
+        // pines se tapaban entre si y tapaban las sedes de debajo, que son el
+        // dato de fondo del mapa. Un solo tamano para los cuatro estados.
+        "icon-size": ["interpolate", ["linear"], ["zoom"], 9, 0.62, 14, 0.95],
         "icon-anchor": "bottom",
         "icon-allow-overlap": true,
       },
+      paint: { "icon-opacity": atenua(1, 0.4) as never },
     });
 
     m.addLayer({
@@ -676,15 +711,12 @@ export default function Mapa({
       filter: filtroEstado(conDano(d.capas)),
       layout: { visibility: visible(d.capas.reportes) },
       paint: {
-        "circle-radius": [
-          "interpolate", ["linear"], ["zoom"],
-          5, ["match", ["get", "estado"], "colapso", 8.1, 6],
-          14, ["match", ["get", "estado"], "colapso", 14.9, 11],
-        ] as never,
+        "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 5, 14, 9],
         "circle-color": porFuente as never,
-        "circle-opacity": 0.95,
+        "circle-opacity": atenua(0.95, 0.35) as never,
         "circle-stroke-color": "#ffffff",
-        "circle-stroke-width": 2.5,
+        "circle-stroke-width": 2,
+        "circle-stroke-opacity": atenua(1, 0.4) as never,
       },
     });
 
@@ -702,12 +734,12 @@ export default function Mapa({
       layout: { visibility: visible(d.capas.reportes) },
       paint: {
         "circle-radius": [
-          "interpolate", ["linear"], ["zoom"], 5, 5, 14, 9,
+          "interpolate", ["linear"], ["zoom"], 5, 4.2, 14, 7.5,
         ] as never,
         "circle-color": "rgba(0,0,0,0)",
         "circle-stroke-color": porFuente as never,
         "circle-stroke-width": 2,
-        "circle-stroke-opacity": 0.9,
+        "circle-stroke-opacity": atenua(0.9, 0.35) as never,
       },
     });
 
@@ -720,14 +752,16 @@ export default function Mapa({
       source: "danos",
       filter: ["==", ["get", "dane"], seleccion ?? ""],
       paint: {
-        "circle-radius": [
-          "interpolate", ["linear"], ["zoom"],
-          5, ["match", ["get", "estado"], "colapso", 14.9, 11],
-          14, ["match", ["get", "estado"], "colapso", 24.3, 18],
-        ] as never,
+        // Casi el doble del radio del punto, para que el anillo se vea como
+        // anillo y no como un borde grueso. Sigue al punto y por eso tampoco
+        // cambia con el estado.
+        "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 9, 14, 15],
         "circle-color": "rgba(0,0,0,0)",
         "circle-stroke-color": porFuente as never,
         "circle-stroke-width": 2.5,
+        // El anillo no se atenua. Marca la sede que esta abierta en la ficha, y
+        // esa se abre a proposito: si quien mira pidio ver una sede de una banda
+        // apagada, el anillo tiene que decirle donde esta.
         "circle-stroke-opacity": 0.9,
       },
     });
@@ -902,11 +936,11 @@ export default function Mapa({
         f.setData({ type: "FeatureCollection", features: rasgosDano() } as never);
       }
     });
-    // `danos` ya llega recortado por la selección, así que cambiar cualquier
-    // filtro cambia este arreglo y vuelve a dibujar. No hace falta escuchar los
-    // filtros aquí, y no hacerlo evita que esta capa y la de sedes puedan
-    // quedar contando cosas distintas.
-  }, [danos]);
+    // También escucha las bandas, porque `en_seleccion` se calcula aquí y
+    // cambia con ellas. No cambia qué puntos hay, solo cuáles se ven
+    // atenuados, pero eso vive en la fuente y hay que reescribirla. Los estados
+    // siguen yendo por `setFilter`, más abajo, que no toca la fuente.
+  }, [danos, filtros.bandas]);
 
   useEffect(() => {
     cuandoListo((m) => {

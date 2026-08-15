@@ -30,6 +30,7 @@ import {
   danosVisibles,
   filtra,
   resume,
+  sedesConDano,
 } from "@/lib/datos";
 import { FILTROS_INICIALES } from "@/lib/tipos";
 import type {
@@ -125,16 +126,37 @@ export default function Pagina() {
   );
   const resumen = useMemo(() => resume(seleccionadas), [seleccionadas]);
 
-  // Los puntos de daño se derivan de la selección, no de los filtros. Así
-  // cualquier filtro nuevo los afecta sin que haya que acordarse de esta capa.
-  const danosEnMapa = useMemo(
-    () => danosVisibles(danos, seleccionadas),
-    [danos, seleccionadas],
+  // Los puntos de daño ya no dependen de la selección de sedes. Lo reportado por
+  // una fuente se ve aunque el modelo esté apagado o filtrado, que es lo que
+  // separa la evidencia de la estimación. Ver `danosVisibles`.
+  const danosEnMapa = useMemo(() => danosVisibles(danos), [danos]);
+  const nDanosFuera = useMemo(() => danosFuera(danos), [danos]);
+
+  /** Cuándo la pantalla está mostrando solo las escuelas con daño.
+   *
+   * No hay un filtro propio para eso ni hace falta: es apagar la capa de sedes
+   * y dejar prendida la de reportes. Son los dos interruptores que ya existen,
+   * uno en la tarjeta de capas y otro en la de daños, y esa combinación no
+   * significa ninguna otra cosa.
+   *
+   * Con la capa de sedes apagada, el contador de arriba a la derecha estaba
+   * contestando una pregunta que nadie hizo: cuántas sedes dejan pasar los
+   * filtros, mientras en el mapa lo único visible eran los puntos de daño. Los
+   * dos números pueden estar muy lejos, porque el reporte de daño dejó de
+   * depender de las bandas de intensidad: hoy 91 de las 189 sedes con reporte
+   * dibujables caen fuera de las bandas 6,0 y 6,5 con las que abre el visor.
+   */
+  const soloDanos = capas.reportes && !capas.sedes;
+  const rasgosConDano = useMemo(
+    () => sedesConDano(coleccion, danosEnMapa, capas.estadosDano),
+    [coleccion, danosEnMapa, capas.estadosDano],
   );
-  const nDanosFuera = useMemo(
-    () => danosFuera(danos, danosEnMapa),
-    [danos, danosEnMapa],
-  );
+  const resumenDanos = useMemo(() => resume(rasgosConDano), [rasgosConDano]);
+  // Lo que cuenta el contador y lo que se lleva la descarga tienen que ser la
+  // misma lista. El botón de CSV vive debajo del número, y exportar otra cosa
+  // sería contradecirlo a un clic de distancia.
+  const contadas = soloDanos ? rasgosConDano : seleccionadas;
+  const resumenContado = soloDanos ? resumenDanos : resumen;
 
   // El mismo recorte pero sin los sub-filtros de la última tarjeta. El relato
   // de "de la selección, N fueron encuestadas y el X % declaró avería" tiene
@@ -307,10 +329,11 @@ export default function Pagina() {
 
       <div className="pointer-events-none absolute inset-x-2 top-2 z-20 flex flex-col items-stretch gap-2 md:inset-x-auto md:right-0 md:top-0 md:bottom-0 md:items-end md:p-3 md:pb-16">
         <ControlDerecho
-          resumen={resumen}
+          resumen={resumenContado}
+          soloDanos={soloDanos}
           mapaBase={mapaBase}
           onMapaBase={setMapaBase}
-          onExportar={() => descarga(seleccionadas)}
+          onExportar={() => descarga(contadas)}
         />
         {/* La ficha se desplaza sola. Si este contenedor tambien se desplazara,
             el encabezado pegajoso con el boton de cerrar se iria por arriba y
@@ -356,8 +379,13 @@ export default function Pagina() {
         className="absolute bottom-2 left-[372px] z-10 mr-3 hidden max-w-[calc(100%-390px)] rounded px-2 py-1 text-[10px] shadow md:block"
         style={{ background: "var(--superficie)", color: "var(--tinta-3)" }}
       >
-        El MMI es la sacudida que estima el USGS, no daño observado. Ninguna
-        sede de esta pantalla ha sido inspeccionada.{" "}
+        {/* Lo del MMI se fue al bloque del MMI, que es donde se pregunta.
+            Y lo de la inspección se dice completo: decir "ninguna sede ha sido
+            inspeccionada" mientras el mapa marca 194 sedes con daño reportado
+            se leía como una contradicción. Lo que falta es la visita técnica
+            oficial, no que nadie haya mirado nada. */}
+        Ninguna sede de esta pantalla tiene inspección técnica oficial. Lo que se
+        marca son reportes de fuente, revisados uno por uno.{" "}
         <Link href="/triaje" className="underline">
           Triaje de reportes
         </Link>

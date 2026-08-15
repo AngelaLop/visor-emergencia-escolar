@@ -6,9 +6,11 @@
  * informe, el problema esta aguas arriba y no aqui.
  */
 
+import { GRAVEDAD } from "./tipos";
 import type {
   ColeccionSedes,
   Dano,
+  EstadoDano,
   Evento,
   Filtros,
   RasgoSede,
@@ -150,92 +152,144 @@ export function filtra(col: ColeccionSedes, f: Filtros): RasgoSede[] {
   return col.features.filter((x) => pasa(x.properties, f));
 }
 
-/** Los daños que se dibujan, dada la selección de sedes que hay en pantalla.
+/** Los daños que se dibujan. Una sola condición: que haya dónde dibujarlos.
  *
- * La regla de fondo es que un punto de daño no puede aparecer sobre una sede que
- * la selección dejó fuera. Si la pantalla está mostrando solo las visitadas por
- * el FFIE, una sede nunca visitada no puede seguir ahí con un punto de color
- * encima: el mapa estaría contando dos cosas distintas a la vez.
+ * Esta capa era dependiente y ahora no lo es. Antes un punto de daño solo salía
+ * si su sede había pasado la selección de la pantalla, y además si su banda
+ * llegaba a `BANDA_MINIMA_DANO`. El argumento era que el mapa no debe contar dos
+ * cosas a la vez: mostrando solo las visitadas por el FFIE, una sede nunca
+ * visitada no debería seguir ahí con un punto encima.
  *
- * Por eso no se reimplementan los filtros aquí. Se recibe el conjunto de sedes
- * que ya pasó por `pasa()`, con todos sus filtros, y el daño entra solo si su
- * sede está en ese conjunto. Cualquier filtro que se agregue mañana funciona sin
- * tocar esta función.
+ * El argumento se cae cuando se mira qué son las dos capas. La intensidad y el
+ * índice son modelo: dicen qué tan fuerte se estima que sacudió y qué tan
+ * vulnerable se supone que es el edificio. El reporte es otra cosa, es una
+ * fuente afirmando que esa escuela se dañó. Someter lo segundo a lo primero
+ * hacía que apagar el modelo apagara la evidencia, que es al revés de como
+ * debería funcionar: quien quiere ver solo lo reportado tiene que poder.
  *
- * Encima van dos condiciones propias de esta capa. Sin coordenada no hay dónde
- * dibujarlo. Y debajo de `BANDA_MINIMA_DANO` no se dibuja, aunque la sede esté
- * seleccionada.
+ * En números, el acople escondía 68 de las 194 sedes con reporte. Cinco no
+ * tienen coordenada, cinco caen fuera de la grilla del ShakeMap del USGS y 58
+ * quedan bajo el piso de 5,5. Esas 58 son el caso feo: una fuente afirma daño,
+ * el visor lo tiene cargado y quien mira no podía enterarse por ningún camino,
+ * porque el aviso de "hay N sedes que la selección deja fuera" aplicaba el mismo
+ * piso y tampoco las contaba.
+ *
+ * Del piso de intensidad, que estaba en 5,5, queda anotado el razonamiento
+ * porque sigue siendo bueno y en algún momento habrá que decidir qué se hace con
+ * él. Hasta 5,0 el USGS describe un sismo que se siente y que tumba objetos de
+ * los estantes, no que agriete un edificio, así que un reporte de daño ahí es
+ * más probable que sea deterioro previo que alguien miró por primera vez después
+ * del sismo. El corte estaba en 5,5 y no en 5,0 por el único caso que tocaba:
+ * las ocho sedes de la IEM Pablo VI, en López de Micay, están entre MMI 4,95 y
+ * 5,07, y el reporte del PTIES habla de la institución y no de un predio, así
+ * que o entraban las ocho o no entraba ninguna.
+ *
+ * Nada de eso justifica no dibujar el punto. Es una advertencia sobre cómo leer
+ * un reporte de intensidad baja, y su lugar es la ficha de la sede, no un filtro
+ * que lo borra del mapa sin decirlo.
  *
  * Lo que aquí NO se decide es el estado. Antes esta función descartaba los
  * "sin daño", con el argumento de que un punto que significa "ya preguntamos y
  * está bien" le quita espacio al que significa que se cayó. El argumento vale
  * para lo que se dibuja al abrir, y eso ya lo resuelve `CAPAS_INICIALES`, que
- * abre solo en colapso y daño. Descartarlos aquí además dejaba sin nada que
- * contar a la casilla "Sin daño": marcaba 0 con cuatro sedes en el archivo, y
- * la razón de inspeccionadas salía "N de N". El estado lo filtran las casillas,
- * que es donde quien mira puede verlo y cambiarlo.
- *
- * Las sedes sin banda quedan fuera por partida doble: no están en la colección,
- * porque están fuera de la grilla del ShakeMap del USGS, así que tampoco están
- * en ninguna selección.
+ * abre solo en colapso y daño. El estado lo filtran las casillas, que es donde
+ * quien mira puede verlo y cambiarlo.
  */
-export function danosVisibles(danos: Dano[], sedes: RasgoSede[]): Dano[] {
-  const dentro = new Set(sedes.map((f) => f.properties.dane));
-  return danos.filter(
-    (d) =>
-      dentro.has(d.dane) &&
-      d.lon != null &&
-      d.lat != null &&
-      d.banda != null &&
-      d.banda >= BANDA_MINIMA_DANO,
-  );
+export function danosVisibles(danos: Dano[]): Dano[] {
+  return danos.filter((d) => d.lon != null && d.lat != null);
 }
 
-/** Los daños que existen y no se están viendo, contados por sede.
+/** Las sedes con reporte que no hay forma de dibujar, contadas por sede.
  *
- * No es un recorte silencioso: la tarjeta lo dice. Se cuentan solo los que
- * podrían llegar a verse cambiando los filtros, o sea los que pasan el piso de
- * intensidad. Los de fuera de la grilla no cuentan, porque no hay filtro que
- * los traiga.
+ * Ya no es "las que la selección deja fuera", porque la selección dejó de tapar
+ * reportes. Ahora es lo único que queda sin dibujar de verdad: las sedes con
+ * reporte que no tienen coordenada. No hay filtro que las traiga ni forma de
+ * ponerlas en un mapa, y por eso la tarjeta las declara en vez de callarlas.
  *
- * Los "sin daño" sí cuentan, desde que tienen casilla propia. Antes se
- * excluían porque no había forma de traerlos a la pantalla; ahora la hay, y
- * dejarlos fuera de este conteo diría que no existen justo a quien está
- * buscando qué le falta por ver.
+ * Antes este conteo aplicaba el mismo piso de intensidad que la capa, así que
+ * las 58 sedes bajo 5,5 no se dibujaban y tampoco aparecían aquí: no había
+ * ningún lugar de la pantalla donde constara que existían.
  */
-export function danosFuera(danos: Dano[], visibles: Dano[]): number {
-  const vistos = new Set(visibles.map((d) => d.dane));
-  const fuera = new Set(
-    danos
-      .filter(
-        (d) =>
-          !vistos.has(d.dane) &&
-          d.lon != null &&
-          d.banda != null &&
-          d.banda >= BANDA_MINIMA_DANO,
-      )
-      .map((d) => d.dane),
-  );
-  return fuera.size;
+export function danosFuera(danos: Dano[]): number {
+  return new Set(
+    danos.filter((d) => d.lon == null || d.lat == null).map((d) => d.dane),
+  ).size;
 }
 
-/** Debajo de esta banda no se dibuja daño reportado.
+/** Las sedes con daño reportado que el mapa está dibujando, como rasgos.
  *
- * Hasta 5,0 el USGS describe un sismo que se siente y que tumba objetos de los
- * estantes, no que agriete un edificio. Un reporte de daño ahí es más probable
- * que sea deterioro previo que alguien miró por primera vez después del sismo,
- * que daño causado por el sismo.
+ * Existe para que el recuento de arriba a la derecha pueda contar estas y no
+ * las que pasan los filtros. Son dos preguntas distintas y hasta ahora la
+ * pantalla solo sabía contestar la segunda: con la capa de sedes apagada y la
+ * de reportes prendida, el mapa mostraba 189 puntos de daño y el contador
+ * seguía diciendo cuántas sedes dejaban pasar las bandas de intensidad.
  *
- * El corte está en 5,5 y no en 5,0 por el único caso que toca. Las ocho sedes de
- * la IEM Pablo VI, en López de Micay, están entre MMI 4,95 y 5,07. Cortando en
- * 5,0 quedaba una sola dentro, y el reporte del PTIES habla de la institución y
- * no de ese predio: dejar una de ocho habría sido elegir por el reporte algo que
- * el reporte no dice. O entran las ocho o no entra ninguna.
+ * Una sede, un rasgo. Cuando una sede tiene varios reportes se mira el más
+ * grave, que es la misma regla con la que el mapa decide qué punto pintar
+ * (`rasgosDano` en el mapa). Contar por reporte diría que Calima El Darién son
+ * dos escuelas, porque ahí hablaron el alcalde y la rectora.
  *
- * Es un juicio provisional, pendiente de confirmar con el equipo que hizo el
- * reporte.
+ * De las 194 sedes con reporte, 10 no están en `sedes_evento.geojson`: cinco de
+ * Manizales sin coordenada en el directorio, que quedan fuera desde la primera
+ * línea porque no hay dónde dibujarlas, y cinco cuyo MMI no llega al 4,0 del
+ * borde de la grilla del USGS (Barbacoas, Acevedo, Ubalá y dos de Elías). A
+ * esas cinco se les arma el rasgo con lo que trae el propio daño, igual que hace
+ * la ficha de sede. Si se dejaran fuera, el contador diría 184 mientras el mapa
+ * dibuja 189 puntos, y quien los cuente creería que le faltan.
+ *
+ * El MMI de las armadas queda en NaN y no en cero: no es que no se hayan
+ * sacudido, es que el modelo del sismo no llega hasta ahí.
  */
-export const BANDA_MINIMA_DANO = 5.5;
+export function sedesConDano(
+  col: ColeccionSedes | null,
+  danos: Dano[],
+  estados: EstadoDano[],
+): RasgoSede[] {
+  const peor = new Map<string, Dano>();
+  for (const d of danos) {
+    if (d.lon == null || d.lat == null) continue;
+    const y = peor.get(d.dane);
+    if (!y || GRAVEDAD[d.estado] > GRAVEDAD[y.estado]) peor.set(d.dane, d);
+  }
+  const enColeccion = new Map(
+    (col?.features ?? []).map((f) => [f.properties.dane, f] as const),
+  );
+  const salida: RasgoSede[] = [];
+  for (const d of peor.values()) {
+    if (!estados.includes(d.estado)) continue;
+    const f = enColeccion.get(d.dane);
+    if (f) {
+      salida.push(f);
+      continue;
+    }
+    // Los nulos ya quedaron fuera arriba, pero al pasar por el mapa el
+    // compilador pierde ese estrechamiento y hay que volver a decirlo.
+    if (d.lon == null || d.lat == null) continue;
+    salida.push({
+      type: "Feature",
+      properties: {
+        dane: d.dane,
+        sede: d.sede,
+        establecimiento: d.establecimiento,
+        mpio: d.mpio,
+        depto: d.depto,
+        matricula: d.matricula,
+        // El daño trae la matrícula ya resuelta con la misma regla de
+        // `alumnos`: manda el C-600 de 2024 y cae al SIMAT de 2022 cuando la
+        // sede no reportó. La bandera dice cuál de las dos es, y sin
+        // devolverla aquí el resumen contaría estas cinco como si fueran de
+        // 2024.
+        matricula_2024: d.matricula_es_de_2022 ? null : d.matricula,
+        encuestada: d.encuestada ?? false,
+        mmi: NaN,
+        nivel: "sin dato",
+        banda: NaN,
+      },
+      geometry: { type: "Point", coordinates: [d.lon, d.lat] },
+    });
+  }
+  return salida;
+}
 
 /** Los alumnos que se le cuentan hoy a una sede.
  *

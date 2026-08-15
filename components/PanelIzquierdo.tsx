@@ -63,9 +63,12 @@ type Props = {
   /** Los valores de `zona` presentes en los datos, para pintar los botones. */
   zonas: string[];
   reportes: Reporte[];
-  /** Solo los daños que la selección deja ver. Los arma `danosVisibles`. */
+  /** Todos los daños con coordenada, dependan o no de la selección de sedes.
+   *  Los arma `danosVisibles`. */
   danos: Dano[];
-  /** Cuántas sedes con reporte quedaron fuera de la selección actual. */
+  /** Cuántas sedes con reporte no tienen coordenada, o sea las únicas que no
+   *  hay forma de dibujar. Ya no es "las que la selección deja fuera": la
+   *  selección dejó de tapar reportes. */
   danosFuera: number;
   onIrASede: (dane: string) => void;
   onExportar: () => void;
@@ -150,7 +153,7 @@ function TarjetaEvento({ evento }: Props) {
           <h1 className="text-sm font-semibold tracking-wide">
             VISOR ESCOLAR DE EMERGENCIA
             <Info
-              texto="Ubica las sedes educativas oficiales de Colombia sobre la intensidad que el sismo del 10 de agosto de 2026 alcanzó en cada punto. Encima marca los reportes de daño que la ciudadanía manda por ChatMap de HOT y que ya pasaron por revisión humana. Y de cada sede muestra cómo estaba su infraestructura antes del sismo, según la encuesta del FFIE y el registro C-600 del DANE. Ninguna sede de esta pantalla ha sido inspeccionada."
+              texto="Ubica las sedes educativas oficiales de Colombia sobre la intensidad que el sismo del 10 de agosto de 2026 alcanzó en cada punto. Encima marca los reportes de daño de tres emisores: la ciudadanía por ChatMap de HOT, la prensa y los boletines oficiales, todos revisados uno por uno. Y de cada sede muestra cómo estaba su infraestructura antes del sismo, según la encuesta del FFIE y el registro C-600 del DANE. Ninguna sede de esta pantalla tiene inspección técnica oficial."
               tono="var(--cima)"
             />
           </h1>
@@ -225,6 +228,7 @@ function TarjetaEvento({ evento }: Props) {
 function TarjetaDanos({
   capas,
   onCapas,
+  filtros,
   reportes,
   danos,
   danosFuera,
@@ -245,9 +249,9 @@ function TarjetaDanos({
   // Las sedes sin dano no entran a esta lista. Esta tarjeta es de danos
   // reportados y una sede de la que se dijo que esta bien no es un dano. El dato
   // no se pierde: sigue en el archivo y la ficha de esa sede lo muestra.
-  // La lista muestra lo mismo que el mapa dibuja, ni una fila mas: `danos` ya
-  // viene recortado por la selección. Una fila sin punto mandaría a buscar en el
-  // mapa algo que no está.
+  // La lista muestra lo mismo que el mapa dibuja, ni una fila mas: `danos` trae
+  // todo reporte con coordenada, que es exactamente lo que se pinta. Una fila
+  // sin punto mandaría a buscar en el mapa algo que no está.
   const porFuente = (f: FuenteDano) => {
     const peor = new Map<string, Dano>();
     for (const d of danos) {
@@ -303,6 +307,23 @@ function TarjetaDanos({
       ? `${miles(nColapso + nDano)} de `
         + `${miles(nColapso + nDano + nSinDano)} revisadas`
       : null;
+
+  // Cuantos de los puntos dibujados caen donde el mapa no esta pintando
+  // intensidad. Hay que decirlo, porque asi como esta se lee como un error: el
+  // visor abre en MMI 6,0 y 6,5, y de las 189 sedes con reporte y coordenada
+  // hay 91 fuera de esas dos bandas, 88 de ellas con la casilla de colapso o la
+  // de daño prendidas, que son las dos que abren. Son puntos de color sobre el
+  // mapa base pelado, sin mancha debajo y sin el punto de la sede al lado. Ya
+  // paso antes con otro nombre: cuando la capa dependia de la seleccion, esas
+  // mismas sedes no se dibujaban y nadie podia enterarse de que existian.
+  //
+  // La banda nula es otra cosa y va contada aparte en la nota: son las cinco
+  // sedes que caen fuera de la grilla del ShakeMap del USGS, donde no hay
+  // intensidad estimada de ningun valor.
+  const fueraDeBanda = peores.filter(
+    (d) => marcado(d.estado)
+      && (d.banda == null || !filtros.bandas.includes(d.banda)),
+  ).length;
 
   return (
     <Tarjeta>
@@ -388,6 +409,14 @@ function TarjetaDanos({
         )}
       </div>
 
+      {fueraDeBanda > 0 && (
+        <p className="px-4 pb-2 text-[11px]" style={{ color: "var(--tinta-3)" }}>
+          <span className="num">{miles(fueraDeBanda)}</span> de esas sedes
+          quedan fuera de las bandas de intensidad encendidas. Se dibujan
+          atenuadas.
+        </p>
+      )}
+
       {abierta && (
         <div className="px-4 pb-3">
           <BloqueFuente
@@ -453,16 +482,6 @@ function TarjetaDanos({
             vacio="Todavía no hay ninguna noticia cargada."
           />
 
-          {danosFuera > 0 && (
-            <p
-              className="rounded border px-3 py-2 text-[11px] leading-relaxed"
-              style={{ borderColor: "var(--linea)", color: "var(--tinta-3)" }}
-            >
-              Hay <span className="num">{miles(danosFuera)}</span> sedes con
-              reporte que la selección actual deja fuera. Se ven al soltar los
-              filtros que las excluyen.
-            </p>
-          )}
         </div>
       )}
     </Tarjeta>

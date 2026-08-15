@@ -21,6 +21,12 @@ import type { MapaBase } from "@/lib/tipos";
 
 type Props = {
   resumen: Resumen;
+  /** Si el mapa está mostrando solo las escuelas con daño reportado, o sea con
+   *  la capa de sedes apagada y la de reportes prendida. Cambia qué se está
+   *  contando, y por eso tiene que cambiar también el rótulo: el mismo número
+   *  bajo el mismo rótulo diría dos cosas distintas según una casilla que está
+   *  en otra tarjeta. */
+  soloDanos: boolean;
   mapaBase: MapaBase;
   onMapaBase: (m: MapaBase) => void;
   onExportar: () => void;
@@ -28,11 +34,15 @@ type Props = {
 
 export default function ControlDerecho({
   resumen,
+  soloDanos,
   mapaBase,
   onMapaBase,
   onExportar,
 }: Props) {
   const [capasAbiertas, setCapasAbiertas] = useState(false);
+  const rotulo = soloDanos
+    ? "sedes educativas con daño reportado"
+    : "sedes educativas seleccionadas";
 
   return (
     <div className="pointer-events-auto flex w-full flex-col gap-2 md:w-60">
@@ -50,14 +60,14 @@ export default function ControlDerecho({
               className="text-[11px] leading-tight md:hidden"
               style={{ color: "var(--tinta-2)" }}
             >
-              sedes educativas
+              {soloDanos ? "sedes con daño" : "sedes educativas"}
             </span>
           </div>
           <div
             className="hidden text-xs md:block"
             style={{ color: "var(--tinta-2)" }}
           >
-            sedes educativas seleccionadas
+            {rotulo}
           </div>
 
           <div className="flex items-center gap-2 md:mt-2 md:block">
@@ -72,7 +82,7 @@ export default function ControlDerecho({
                 (resumen.matriculaDe2022 > 0
                   ? `${miles(resumen.matriculaDe2022)} de las ${miles(resumen.sedes)} ` +
                     `sedes no reportaron ese año y van con su matrícula del SIMAT 2022.`
-                  : `Todas las sedes de la selección reportaron ese año.`)
+                  : `Todas las sedes que se cuentan aquí reportaron ese año.`)
               }
             >
               {miles(resumen.matricula)}
@@ -107,8 +117,8 @@ export default function ControlDerecho({
           <button
             onClick={onExportar}
             disabled={!resumen.sedes}
-            aria-label="Descargar la selección en CSV"
-            title="Descargar la selección en CSV"
+            aria-label={`Descargar en CSV las ${rotulo}`}
+            title={`Descargar en CSV las ${rotulo}`}
             className="ml-auto shrink-0 disabled:opacity-40 md:hidden"
             style={{ color: "var(--tinta-3)" }}
           >
@@ -123,7 +133,7 @@ export default function ControlDerecho({
           style={{ borderColor: "var(--linea)", color: "var(--tinta-3)" }}
         >
           <IconoDescarga />
-          Descargar la selección en CSV
+          {soloDanos ? "Descargar las sedes con daño en CSV" : "Descargar la selección en CSV"}
         </button>
       </section>
 

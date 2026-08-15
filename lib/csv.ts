@@ -34,7 +34,10 @@ const COLUMNAS: [string, (r: RasgoSede) => string | number][] = [
   ["ivid_techos", (r) => r.properties.ivid_techos ?? ""],
   ["ivid_muros", (r) => r.properties.ivid_muros ?? ""],
   ["ivid_pisos", (r) => r.properties.ivid_pisos ?? ""],
-  ["mmi", (r) => r.properties.mmi],
+  // Vacio cuando la sede queda fuera de la grilla del ShakeMap. Son cinco con
+  // dano reportado y su MMI llega aqui como NaN, que escrito literalmente en la
+  // columna se lee como un dato roto y no como un dato que no existe.
+  ["mmi", (r) => (Number.isFinite(r.properties.mmi) ? r.properties.mmi : "")],
   ["nivel_mmi", (r) => r.properties.nivel],
   ["encuestada", (r) => (r.properties.encuestada ? "si" : "no")],
   ["techos_declarados", (r) => r.properties.techos ?? ""],

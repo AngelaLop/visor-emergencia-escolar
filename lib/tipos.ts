@@ -268,15 +268,25 @@ export const BANDAS = [
   { banda: 6.5, etiqueta: "6,5", nota: "daño material esperado" },
 ];
 
+/** Qué es el MMI, dentro del bloque del MMI.
+ *
+ * Antes esto se leía en dos sitios y ninguno era el bueno: aquí iba una escala
+ * de lectura grado por grado, y la advertencia de que el MMI es sacudida
+ * estimada y no daño observado estaba pegada al pie de la pantalla, lejos del
+ * control al que se refiere.
+ *
+ * La escala grado por grado se fue porque la lista de bandas ya la dice, y con
+ * ventaja: cada casilla lleva su nota al lado ("caen objetos", "empieza el daño
+ * material") y se lee mientras se prende. Repetirlo en prosa era decir dos veces
+ * lo mismo, una de ellas donde nadie la estaba mirando.
+ */
 export const EXPLICACION_MMI =
-  "La magnitud 7,4 es un solo número para todo el sismo. La intensidad, en " +
-  "cambio, dice qué tan fuerte se sintió en cada lugar, y cambia de un " +
-  "municipio a otro según la distancia y el tipo de suelo. Se lee así: en 4 " +
-  "las lámparas se mueven y la gente lo siente adentro; en 5 lo siente todo el " +
-  "mundo y se caen cosas de los estantes; desde 6 empieza el daño material, " +
-  "se desprende el repello y se agrieta la mampostería mal construida. Estos " +
-  "valores los estima un modelo del USGS a partir de reportes de la gente y de " +
-  "estaciones sismológicas; nadie fue a verificarlos en terreno.";
+  "El MMI (la intensidad de Mercalli) mide qué tan fuerte se sintió el sismo " +
+  "en cada zona. La magnitud 7,4 es un solo número para todo el sismo; la " +
+  "intensidad cambia de un municipio a otro según la distancia y el tipo de " +
+  "suelo. La estima un modelo del Servicio Geológico de Estados Unidos (USGS) " +
+  "con reportes de la gente y estaciones sismológicas: es sacudida estimada, " +
+  "no daño observado, y nadie fue a verificarla en terreno.";
 
 /** La escala está publicada por el Servicio Geológico de Estados Unidos. */
 export const FUENTE_MMI = {
