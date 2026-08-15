@@ -648,21 +648,21 @@ export function horaLocal(isoUtc: string): string {
  * cambian allí hay que cambiarlos aquí, que es la deuda conocida de tener la
  * cifra escrita en prosa.
  */
-export const FUENTES_DEL_VISOR = `Ubica las 26.591 sedes educativas del área afectada sobre la intensidad que el sismo del 10 de agosto de 2026 alcanzó en cada punto, y encima marca lo que se ha reportado desde entonces. Ninguna sede de esta pantalla tiene inspección técnica oficial: todo lo que se ve es declarado, estimado o dicho por alguien.
+export const FUENTES_DEL_VISOR = `Este visor cruza tres cosas: dónde sacudió el sismo del 10 de agosto de 2026, qué se ha reportado desde entonces y cómo estaba cada escuela antes. Ninguna sede tiene inspección técnica. Todo lo que se ve es declarado o estimado.
 
-DÓNDE TEMBLÓ Y CUÁNTO
-ShakeMap del USGS, producto us6000tjl2, magnitud 7,4. Es un modelo, no una medición en cada escuela: interpola entre 2 estaciones y 239 reportes ciudadanos, así que la intensidad de una sede es una estimación de su entorno.
+DÓNDE SACUDIÓ
+ShakeMap del USGS. Un modelo calcula la fuerza del temblor en cada punto, según la distancia y el tipo de suelo. Se apoyó en 2 estaciones y 239 reportes de personas para todo el país. Es una estimación de la zona, no una medición en la escuela, y no dice si la escuela se dañó.
 
-QUÉ SE HA REPORTADO DESPUÉS DEL SISMO
-MEN. Capa pública del tablero del Ministerio de Educación, con el estado físico declarado sede por sede. Trae 1.184 sedes con estado sobre un universo priorizado de 9.273, en seis departamentos.
-BID. Reporte del equipo PTIES con corte al 10 de agosto.
-Prensa. Declaraciones de autoridades recogidas por medios, cada una con su autor, su cargo, su fecha y su cita textual.
-ChatMap (HOT). Fotografías enviadas por la ciudadanía por WhatsApp. Que una esté confirmada significa que alguien la emparejó con la sede, no que la sede esté dañada.
+QUÉ SE HA REPORTADO
+MEN. Capa pública del Ministerio. Sale de una encuesta a rectores que no es exhaustiva: 1.184 sedes con estado, de 9.273 en seis departamentos. Una sede sin reporte no es una sede sin daño.
+BID. Reporte del equipo PTIES, con corte al 10 de agosto.
+Prensa. Lo que declaró una autoridad, con su nombre, su cargo y su cita.
+ChatMap (HOT). Fotos que envía la gente por WhatsApp. Que esté confirmada quiere decir que alguien la emparejó con la sede, no que la sede esté dañada.
 
-CÓMO ESTABA LA ESCUELA ANTES DEL SISMO
-Encuesta del FFIE. Estado de techos, muros y pisos declarado por el rector, y las fotografías de campo. Es una declaración, no una inspección, y es anterior al sismo.
-C-600 del DANE, vigencia 2024. Energía, internet, matrícula y si la sede sigue operando.
-SIMAT 2022. El directorio de sedes, con su coordenada y su matrícula. Es el marco de las 52.823 sedes del país.
-CIMA. Control de calidad de la coordenada, que dice cuáles están verificadas contra terreno.
-Open Buildings de Google. La huella del edificio, para las sedes de las bandas altas.
-Índice de riqueza relativa de Meta. El entorno socioeconómico, en quintiles nacionales.`
+CÓMO ESTABA ANTES
+Encuesta del FFIE. El rector declaró el estado de techos, muros y pisos, y quedaron fotos de campo. Es anterior al sismo.
+C-600 del DANE, 2024. Energía, internet, matrícula y si la sede sigue abierta.
+SIMAT 2022. El directorio de las 52.823 sedes del país, con su coordenada.
+CIMA. Dice cuáles coordenadas están verificadas.
+Open Buildings de Google. La huella del edificio.
+Índice de riqueza de Meta. El entorno de la escuela, en quintiles.`

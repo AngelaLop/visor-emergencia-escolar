@@ -690,7 +690,7 @@ function TarjetaDanos({
             // no hay dónde leer por qué. Son las sedes que reportan los dos, y
             // en la tarjeta se cuentan una sola vez.
             solape={sedesEnAmbosOficiales}
-            nota="Dos emisores. El MEN publica una capa con el estado físico declarado sede por sede, con el código DANE ya puesto. El BID aporta el reporte del equipo PTIES con corte al 10 de agosto, que nombra instituciones y cuyas sedes se resolvieron una por una."
+            nota="Dos emisores. El MEN publica una capa con el estado físico sede por sede y el código DANE ya puesto; ese estado sale de una encuesta a rectores que no es exhaustiva, así que una sede sin reporte no es una sede sin daño. El BID aporta el reporte del equipo PTIES con corte al 10 de agosto, que nombra instituciones y cuyas sedes se resolvieron una por una."
             pie={<PieMen meta={metaMen} edicion={edicionMen} />}
             vacio="Todavía no hay ningún reporte oficial cargado."
           />
