@@ -255,7 +255,7 @@ function TarjetaDanos({
   // El recorte de intensidad, aplicado a todo lo que esta tarjeta cuenta y
   // lista. Es lo que sostiene la promesa de los comentarios de aquí abajo: que
   // el número del encabezado y las filas de cada fuente son exactamente los
-  // puntos del mapa. Con la casilla "ver todas las intensidades" apagada, el
+  // puntos del mapa. Con la casilla "ver todas las sedes reportadas" apagada, el
   // mapa dibuja solo los reportes de las bandas encendidas, así que contar los
   // demás mandaría a buscar puntos que no están.
   //
@@ -314,7 +314,7 @@ function TarjetaDanos({
   // El recorte de intensidad si lo aplica, y por la misma razon: prender una
   // casilla hace aparecer justo esos puntos y no los de las bandas apagadas.
   // Cuantos quedan fuera del recorte se dice aparte, en la casilla de ver todas
-  // las intensidades, que es donde se puede hacer algo al respecto.
+  // las sedes reportadas, que es donde se puede hacer algo al respecto.
   const nColapso = peores.filter((d) => d.estado === "colapso").length;
   const nDano = peores.filter((d) => d.estado === "dano").length;
   const nSinDano = peores.filter((d) => d.estado === "sin_dano").length;
@@ -462,7 +462,7 @@ function TarjetaDanos({
               {todasLasBandas ? "✓" : ""}
             </span>
             <span>
-              Ver todas las intensidades.{" "}
+              Ver todas las sedes reportadas.{" "}
               {todasLasBandas ? (
                 <>
                   <span className="num">{miles(fueraDeBanda)}</span> sedes caen

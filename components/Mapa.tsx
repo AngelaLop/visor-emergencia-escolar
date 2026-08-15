@@ -183,8 +183,8 @@ export type Capas = {
    * Va apagado por defecto y no al revés. Estuvo al revés un rato y no funcionó:
    * los puntos aparecían sobre el mapa base pelado, sin mancha debajo, y eso no
    * se lee como "aquí hay un reporte que el modelo no explica", se lee como que
-   * el mapa está mal dibujado. Ver la opción "todas las intensidades" en la
-   * tarjeta de daños. */
+   * el mapa está mal dibujado. Ver la casilla "ver todas las sedes
+   * reportadas" en la tarjeta de daños. */
   danosTodasLasBandas: boolean;
 };
 
