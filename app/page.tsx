@@ -98,30 +98,44 @@ export default function Pagina() {
   const [margenLogos, setMargenLogos] = useState(300);
   const [error, setError] = useState<string | null>(null);
 
+  /** La carga, en dos grupos y no en uno.
+   *
+   * `Promise.all` termina cuando termina el último, así que meter un archivo en
+   * esa lista es decidir que la pantalla no se dibuja hasta que ese archivo
+   * llegue. El grupo bloqueante es lo que la primera pantalla necesita para
+   * decir algo: el evento, las sedes, la mancha de intensidad y los daños.
+   *
+   * Lo demás entra solo. Los territorios de las secretarías pesan 1 MB y no se
+   * usan hasta que alguien elige una entidad; el contorno del país y los
+   * reportes de ChatMap tampoco cambian lo que se lee al abrir. Estuvieron en el
+   * grupo bloqueante y en un teléfono eso se notaba: `sedes_evento.geojson` son
+   * 17,3 MB de JSON que el navegador tiene que convertir en 26.591 rasgos, y
+   * encima de eso el mapa se quedaba esperando un megabyte de polígonos que
+   * nadie había pedido.
+   *
+   * Cada uno se pinta cuando llega, porque las capas del mapa son
+   * independientes: `Mapa.tsx` tiene un efecto por fuente y ninguno depende de
+   * que los otros hayan terminado.
+   */
   useEffect(() => {
-    Promise.all([
-      cargaEvento(),
-      cargaSedes(),
-      cargaContornos(),
-      cargaBordeGrilla(),
-      cargaColombia(),
-      cargaReportes(),
-      cargaDanos(),
-      cargaSecretarias(),
-    ])
-      .then(([e, s, c, b, co, r, dn, se]) => {
+    Promise.all([cargaEvento(), cargaSedes(), cargaContornos(), cargaDanos()])
+      .then(([e, s, c, dn]) => {
         setEvento(e as Evento);
         setColeccion(s as ColeccionSedes);
         setContornos(c);
-        setBordeGrilla(b);
-        setColombia(co);
-        setReportes(r as Reporte[]);
         const d = dn as { danos: Dano[]; men: MetaMen | null };
         setDanos(d.danos);
         setMetaMen(d.men);
-        setTerritorios(se as ColeccionSecretarias | null);
       })
       .catch((e: Error) => setError(e.message));
+
+    // Los que se agregan encima de un mapa que ya responde su pregunta. Si uno
+    // falla, se pierde su capa y no la pantalla, que es lo que ya prometían
+    // `cargaColombia` y `cargaSecretarias` en `lib/datos.ts`.
+    cargaBordeGrilla().then(setBordeGrilla).catch(() => {});
+    cargaColombia().then(setColombia).catch(() => {});
+    cargaReportes().then((r) => setReportes(r as Reporte[])).catch(() => {});
+    cargaSecretarias().then(setTerritorios).catch(() => {});
 
     const guardado = localStorage.getItem("visor.mapa") as MapaBase | null;
     if (guardado) setMapaBase(guardado);

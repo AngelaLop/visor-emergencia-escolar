@@ -34,7 +34,7 @@
 
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { cargaHuellas, miles, TONO_IVID } from "@/lib/datos";
 import {
@@ -472,12 +472,20 @@ export default function Mapa({
   const div = useRef<HTMLDivElement>(null);
   const mapa = useRef<maplibregl.Map | null>(null);
   const listo = useRef(false);
+  /** Cuantas veces se han montado las capas. Sube al terminar cada montaje, y
+   *  con eso vuelven a correr los efectos que escriben en el mapa. Ver
+   *  `cuandoListo`. */
+  const [generacion, setGeneracion] = useState(0);
   const cacheHuellas = useRef(new Map<string, unknown>());
   const marcaEpicentro = useRef<maplibregl.Marker | null>(null);
   /** Si la corrida anterior tenia territorio dibujado. Distingue "se quito la
    *  secretaria", que devuelve el encuadre, de "todavia no hay ninguna", que no
    *  toca el mapa. */
   const habiaTerritorio = useRef(false);
+  /** Que secretarias estaban elegidas la ultima vez que este efecto movio la
+   *  camara. Sirve para separar "cambio la seleccion" de "se remontaron las
+   *  capas": lo primero tiene que encuadrar y lo segundo solo redibujar. */
+  const ultimaSeleccion = useRef("");
   // Cambiar de tema recarga el estilo entero y con el se van todas las fuentes,
   // asi que hay que poder volver a montarlas con los datos que hubiera.
   const datos = useRef({ contornos, bordeGrilla, colombia, secretarias, sedes,
@@ -1004,7 +1012,10 @@ export default function Mapa({
     });
 
     listo.current = true;
-    m.fire("visor:listo");
+    // Sube la generacion en vez de disparar un evento. Lo segundo obligaba a
+    // encolar el trabajo pendiente en listeners de un solo uso, y esos listeners
+    // se quedaban con los valores del render en que se registraron.
+    setGeneracion((g) => g + 1);
   }
 
   useEffect(() => {
@@ -1140,12 +1151,27 @@ export default function Mapa({
     m.once("styledata", () => montaCapas(m));
   }, [mapaBase]);
 
-  /** Aplica algo cuando el estilo este montado, ahora o cuando termine. */
+  /** Escribe en el mapa, y solo si hay donde escribir.
+   *
+   * Antes esto encolaba: cuando el estilo no estaba montado, guardaba el trabajo
+   * en un `m.once("visor:listo")` para hacerlo al terminar. Parecia inofensivo y
+   * no lo era. El listener se quedaba con los valores del render en que se
+   * registro, asi que al dispararse escribia lo que era cierto entonces y no lo
+   * que era cierto al montar. En la primera carga eso significa la coleccion de
+   * sedes vacia, que es la que hay antes de que bajen los 17,3 MB de
+   * `sedes_evento.geojson`: el mapa se quedaba con cero sedes grises y sin nada
+   * que volviera a escribirlas encima. En el telefono, donde ese archivo tarda
+   * mas en convertirse en 26.591 rasgos, pasaba siempre.
+   *
+   * Ahora no encola: si no hay donde escribir, no escribe. Lo que hace que el
+   * trabajo no se pierda es `generacion`, que sube al terminar cada montaje y
+   * esta en las dependencias de todos los efectos que llaman aqui. Al montarse
+   * las capas, cada efecto vuelve a correr con los valores de ese momento.
+   */
   function cuandoListo(fn: (m: maplibregl.Map) => void) {
     const m = mapa.current;
-    if (!m) return;
-    if (listo.current) fn(m);
-    else m.once("visor:listo", () => fn(m));
+    if (!m || !listo.current) return;
+    fn(m);
   }
 
   useEffect(() => {
@@ -1157,14 +1183,14 @@ export default function Mapa({
       const c = m.getSource("colombia") as maplibregl.GeoJSONSource | undefined;
       if (c && colombia) c.setData(colombia as never);
     });
-  }, [contornos, bordeGrilla, colombia]);
+  }, [contornos, bordeGrilla, colombia, generacion]);
 
   useEffect(() => {
     cuandoListo((m) => {
       const f = m.getSource("sedes") as maplibregl.GeoJSONSource | undefined;
       if (f) f.setData({ type: "FeatureCollection", features: sedes } as never);
     });
-  }, [sedes]);
+  }, [sedes, generacion]);
 
   useEffect(() => {
     cuandoListo((m) => {
@@ -1174,7 +1200,7 @@ export default function Mapa({
       m.setFilter("sedes-pin", f);
       m.setFilter("sedes-realce", f);
     });
-  }, [danesConPin]);
+  }, [danesConPin, generacion]);
 
   /** La linea del territorio y el encuadre, cuando cambia la secretaria elegida.
    *
@@ -1188,11 +1214,11 @@ export default function Mapa({
    * decision que toma `limpiaSecretarias` con las bandas: un rodeo por una
    * secretaria no deja el mapa encuadrado en un sitio que nadie pidio.
    *
-   * Pero solo si antes habia alguna. El geojson de territorios llega despues del
-   * primer dibujo, asi que este efecto corre una segunda vez con la seleccion
-   * todavia vacia: sin la guarda, esa corrida devolvia el mapa al encuadre
-   * inicial y se llevaba por delante lo que el usuario hubiera movido mientras
-   * cargaba.
+   * Pero solo si la seleccion de verdad cambio. Este efecto corre tambien cuando
+   * llega el geojson de territorios, que baja despues del primer dibujo, y cada
+   * vez que se remontan las capas al cambiar de mapa base. En esas dos corridas
+   * hay que redibujar la linea y no tocar la camara: mover el mapa ahi se lleva
+   * por delante el zoom que hubiera puesto quien esta mirando.
    */
   useEffect(() => {
     cuandoListo((m) => {
@@ -1202,6 +1228,14 @@ export default function Mapa({
       f.setData(coleccion as never);
       const habia = habiaTerritorio.current;
       habiaTerritorio.current = caja != null;
+
+      // La linea se vuelve a dibujar en cada montaje, la camara no. Sin esta
+      // separacion, cambiar de mapa base reencuadraba en la secretaria y se
+      // llevaba por delante el zoom que hubiera puesto quien esta mirando.
+      const clave = filtros.secretarias.join("|");
+      const cambio = clave !== ultimaSeleccion.current;
+      ultimaSeleccion.current = clave;
+      if (!cambio) return;
 
       if (!caja) {
         if (habia) m.easeTo({ ...VISTA_INICIAL, duration: 600 });
@@ -1218,7 +1252,7 @@ export default function Mapa({
         duration: 800,
       });
     });
-  }, [secretarias, filtros.secretarias]);
+  }, [secretarias, filtros.secretarias, generacion]);
 
   useEffect(() => {
     cuandoListo((m) => {
@@ -1231,7 +1265,7 @@ export default function Mapa({
     // cambia con ellas. No cambia qué puntos hay, solo cuáles se ven
     // atenuados, pero eso vive en la fuente y hay que reescribirla. Los estados
     // siguen yendo por `setFilter`, más abajo, que no toca la fuente.
-  }, [danos, filtros.bandas]);
+  }, [danos, filtros.bandas, generacion]);
 
   useEffect(() => {
     cuandoListo((m) => {
@@ -1275,7 +1309,7 @@ export default function Mapa({
     // Las casillas de daño no entran: rehacer los pines en cada clic era lo
     // que trababa el mapa. Color, IVID y bandas sí, porque cambian el dibujo
     // de las 26 mil.
-  }, [filtros, capas.sedes, capas.intensidad, tema]);
+  }, [filtros, capas.sedes, capas.intensidad, tema, generacion]);
 
   useEffect(() => {
     cuandoListo((m) => {
@@ -1296,7 +1330,7 @@ export default function Mapa({
       ver("huellas-linea", capas.huellas);
     });
   }, [capas.intensidad, capas.sedes, capas.territorio, capas.reportes,
-      capas.huellas, filtros]);
+      capas.huellas, filtros, generacion]);
 
   useEffect(() => {
     cuandoListo((m) => {
@@ -1314,7 +1348,7 @@ export default function Mapa({
       m.setFilter("danos-sin", conRecorte(sinDano ? ["sin_dano"] : []));
     });
   }, [capas.estadosDano, capas.subtipos, capas.emisores,
-      capas.danosTodasLasBandas]);
+      capas.danosTodasLasBandas, generacion]);
 
   useEffect(() => {
     cuandoListo((m) => {
@@ -1322,7 +1356,7 @@ export default function Mapa({
       m.setFilter("sedes-seleccion", ["==", ["get", "dane"], seleccion ?? ""]);
       m.setFilter("danos-seleccion", ["==", ["get", "dane"], seleccion ?? ""]);
     });
-  }, [seleccion]);
+  }, [seleccion, generacion]);
 
   /** Vuela hasta la sede que se abrió, se haya tocado en la lista o en el mapa.
    *
