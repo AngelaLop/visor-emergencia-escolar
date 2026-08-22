@@ -43,10 +43,12 @@ import {
   NOMBRE_FUENTE,
   nombreFino,
   reportePorSede,
+  EMISORES,
   SUBTIPOS,
 } from "@/lib/tipos";
 import type { EstadoDano } from "@/lib/tipos";
 import type {
+  ColeccionSecretarias,
   Dano,
   Evento,
   Filtros,
@@ -153,6 +155,9 @@ type Props = {
   /** Los DANE con algun reporte, para que el filtro de la lista los distinga. */
   danesConReporte: string[];
   colombia: unknown | null;
+  /** El territorio de cada secretaria, un rasgo por entidad. Lo produce el
+   *  script 44 y solo se dibuja el de las secretarias elegidas. */
+  secretarias: ColeccionSecretarias | null;
   filtros: Filtros;
   capas: Capas;
   mapaBase: MapaBase;
@@ -162,6 +167,11 @@ type Props = {
    *  misma tarjeta vuelva a mover el mapa. */
   foco: { dane: string; n: number } | null;
   onSeleccion: (dane: string | null) => void;
+  /** Sedes que ya se dibujan como pin de daño. El punto gris no va debajo.
+   *
+   * Viaja como filtro de capa, no rehaciendo la fuente. Reescribir 26 mil
+   * rasgos en cada casilla de daño era lo que dejaba el mapa trabado. */
+  danesConPin: string[];
 };
 
 type Expr = maplibregl.ExpressionSpecification;
@@ -182,20 +192,43 @@ type Expr = maplibregl.ExpressionSpecification;
  *  con `colapso_sd` y `dano_sd` y tienen su propia pastilla.
  */
 function filtroDanos(estados: EstadoDano[], todas: boolean,
-                     subtipos: string[]): Expr {
+                     subtipos: string[], emisores: string[]): Expr {
   const porEstado: Expr =
     ["in", ["get", "estado"], ["literal", estados]] as Expr;
   const porSubtipo: Expr = ["any",
     ["==", ["get", "subtipo"], ""],
     ["in", ["get", "subtipo"], ["literal", subtipos]]] as Expr;
-  const base: Expr = ["all", porEstado, porSubtipo] as Expr;
+  // El emisor vacio pasa siempre. Es el de las noticias, que no son una
+  // entidad: exigirles estar en la lista las borraria del mapa en cuanto
+  // alguien apagara cualquier emisor oficial.
+  const porEmisor: Expr = ["any",
+    ["==", ["get", "emisor"], ""],
+    ["in", ["get", "emisor"], ["literal", emisores]]] as Expr;
+  const base: Expr = ["all", porEstado, porSubtipo, porEmisor] as Expr;
   return todas ? base : (["all", base, ["get", "en_seleccion"]] as Expr);
+}
+
+/** Esconde del grafito las sedes que ya tienen pin de daño.
+ *
+ *  `null` cuando la lista va vacía: MapLibre entiende "sin filtro" y no
+ *  "filtro que no deja pasar a nadie". */
+function filtroSinGris(danes: string[]): Expr | null {
+  if (danes.length === 0) return null;
+  return ["!", ["in", ["get", "dane"], ["literal", danes]]] as Expr;
 }
 
 /** Que se dibuja encima del mapa base. Lo maneja la tarjeta de capas. */
 export type Capas = {
   intensidad: boolean;
   sedes: boolean;
+  /** La linea punteada del territorio de las secretarias elegidas.
+   *
+   * Existe para que la fila de "Secretaría de educación" tenga el mismo ojo que
+   * las otras dos del panel. No cambia que sedes se cuentan: el recorte de
+   * jurisdiccion lo hace `filtros.secretarias` y sigue en pie con la linea
+   * apagada. Lo unico que apaga es el dibujo del limite, que es de 2020 y a
+   * veces estorba encima de la mancha de intensidad. */
+  territorio: boolean;
   reportes: boolean;
   huellas: boolean;
   /** Que estados de la capa de daños se dibujan.
@@ -222,11 +255,19 @@ export type Capas = {
    * siquiera tienen banda, porque caen fuera de la grilla del ShakeMap. Sin esta
    * opción no había ningún camino para llegar a ellas.
    *
-   * Va apagado por defecto y no al revés. Estuvo al revés un rato y no funcionó:
-   * los puntos aparecían sobre el mapa base pelado, sin mancha debajo, y eso no
-   * se lee como "aquí hay un reporte que el modelo no explica", se lee como que
-   * el mapa está mal dibujado. Ver la casilla "ver todas las sedes
-   * reportadas" en la tarjeta de daños. */
+   * Abre encendido desde el 21 de agosto de 2026. Estuvo apagado y el argumento
+   * era de dibujo: los puntos fuera de las bandas aparecían sobre el mapa base
+   * pelado, sin mancha debajo, y eso no se lee como "aquí hay un reporte que el
+   * modelo no explica" sino como que el mapa está mal. Ese argumento ya está
+   * atendido: lo de fuera del recorte se dibuja atenuado en vez de sólido, así
+   * que se distingue sin desaparecer.
+   *
+   * Lo que lo decidió es otra cosa. Con reportes oficiales de tres emisores, la
+   * intensidad dejó de ser la herramienta con la que se pronostica el daño y
+   * pasó a ser una característica más de la sede. Un mapa que abre escondiendo
+   * escuelas reportadas porque el modelo dice que ahí no sacudió fuerte tiene el
+   * orden al revés. Ver la casilla "ver todas las sedes reportadas" en la
+   * tarjeta de daños, que sigue existiendo para volver a apretar el recorte. */
   danosTodasLasBandas: boolean;
   /** Cuales subtipos se dibujan, de los dos estados que tienen desglose.
    *
@@ -244,16 +285,32 @@ export type Capas = {
    * primero, pero desplegada por defecto el filtro mas fino de la pantalla
    * ocuparia mas espacio que el mas grueso. */
   subtipos: string[];
+  /** Que emisores de la fuente oficial se dibujan.
+   *
+   * Existe desde que `oficial` dejo de ser dos entidades que decian casi lo
+   * mismo. La Secretaria del Valle aporta 570 sedes y manda sobre el MEN cuando
+   * las dos hablan de la misma, asi que hace falta poder ver el mapa de una sola
+   * de ellas: cuantas escuelas aporta la secretaria que el MEN no tiene es
+   * exactamente la pregunta que se hace al empezar a trabajar con un territorio.
+   *
+   * Las noticias no estan en la lista y no les afecta. Su `emisor` es vacio
+   * porque una nota de prensa no es una entidad que reporte, es alguien
+   * citando a una autoridad, y quien la emite ya se lee en la ficha.
+   *
+   * Abre con todos encendidos: el mapa no debe empezar escondiendo una fuente. */
+  emisores: string[];
 };
 
 export const CAPAS_INICIALES: Capas = {
   intensidad: true,
   sedes: true,
+  territorio: true,
   reportes: true,
   huellas: true,
   estadosDano: ["colapso", "dano"],
-  danosTodasLasBandas: false,
+  danosTodasLasBandas: true,
   subtipos: SUBTIPOS,
+  emisores: [...EMISORES],
 };
 
 /** El color dice lo que pregunta la pestana activa, y nada mas.
@@ -398,6 +455,7 @@ export default function Mapa({
   contornos,
   bordeGrilla,
   colombia,
+  secretarias,
   evento,
   sedes,
   danos,
@@ -409,18 +467,23 @@ export default function Mapa({
   seleccion,
   foco,
   onSeleccion,
+  danesConPin,
 }: Props) {
   const div = useRef<HTMLDivElement>(null);
   const mapa = useRef<maplibregl.Map | null>(null);
   const listo = useRef(false);
   const cacheHuellas = useRef(new Map<string, unknown>());
   const marcaEpicentro = useRef<maplibregl.Marker | null>(null);
+  /** Si la corrida anterior tenia territorio dibujado. Distingue "se quito la
+   *  secretaria", que devuelve el encuadre, de "todavia no hay ninguna", que no
+   *  toca el mapa. */
+  const habiaTerritorio = useRef(false);
   // Cambiar de tema recarga el estilo entero y con el se van todas las fuentes,
   // asi que hay que poder volver a montarlas con los datos que hubiera.
-  const datos = useRef({ contornos, bordeGrilla, colombia, sedes,
-    danos, danesConReporte, filtros, capas, tema });
-  datos.current = { contornos, bordeGrilla, colombia, sedes,
-    danos, danesConReporte, filtros, capas, tema };
+  const datos = useRef({ contornos, bordeGrilla, colombia, secretarias, sedes,
+    danos, danesConReporte, danesConPin, filtros, capas, tema });
+  datos.current = { contornos, bordeGrilla, colombia, secretarias, sedes,
+    danos, danesConReporte, danesConPin, filtros, capas, tema };
   const alClic = useRef(onSeleccion);
   alClic.current = onSeleccion;
 
@@ -444,6 +507,7 @@ export default function Mapa({
     // `coordinates: [null, null]`, que MapLibre acepta sin quejarse y deja el
     // punto en un sitio que no existe.
     const bandas = datos.current.filtros.bandas;
+    const sinRecorte = datos.current.filtros.secretarias.length > 0;
     return [...peor.values()].filter((d) => d.lon != null && d.lat != null)
       .map((d) => ({
       type: "Feature" as const,
@@ -476,13 +540,49 @@ export default function Mapa({
         // fuera del recorte. Las sedes sin banda, que son las que caen fuera de
         // la grilla del ShakeMap, nunca estan dentro: de esas el modelo no dice
         // nada, asi que ninguna seleccion de bandas las incluye.
-        en_seleccion: d.banda != null && bandas.includes(d.banda),
+        //
+        // Con una secretaria elegida no hay recorte que hacer visible: alli la
+        // banda solo pinta y no reparte (ver `pasa` en `lib/datos.ts`). Atenuar
+        // contra una lista que no recorta dejaria todos los puntos translucidos
+        // sin que nada lo explique.
+        en_seleccion: sinRecorte || (d.banda != null && bandas.includes(d.banda)),
       },
       geometry: {
         type: "Point" as const,
         coordinates: [d.lon, d.lat] as [number, number],
       },
     }));
+  }
+
+  /** Los territorios de las secretarias elegidas, y su caja comun.
+   *
+   * Sin ninguna elegida devuelve la coleccion vacia y `caja` nula, que es lo
+   * que apaga la linea y deja el mapa quieto. No es lo mismo que "todas": con
+   * las 63 lineas encima el mapa queda rayado y ninguna dice nada.
+   *
+   * La caja sale de la propiedad `caja` que ya trae cada rasgo y no de recorrer
+   * la geometria. El script 44 la calculo una vez; algunos de estos poligonos
+   * son de miles de vertices y recorrerlos en cada clic no aporta precision.
+   */
+  function territorioElegido() {
+    const d = datos.current;
+    const elegidas = d.filtros.secretarias;
+    const rasgos = (d.secretarias?.features ?? []).filter((f) =>
+      elegidas.includes(f.properties.secretaria),
+    );
+    let caja: [number, number, number, number] | null = null;
+    for (const f of rasgos) {
+      const c = f.properties.caja;
+      if (!c) continue;
+      caja = caja
+        ? [Math.min(caja[0], c[0]), Math.min(caja[1], c[1]),
+           Math.max(caja[2], c[2]), Math.max(caja[3], c[3])]
+        : [...c];
+    }
+    return {
+      coleccion: { type: "FeatureCollection" as const, features: rasgos },
+      caja,
+    };
   }
 
   function registraPines(m: maplibregl.Map, color: string) {
@@ -527,6 +627,14 @@ export default function Mapa({
     m.addSource("colombia", {
       type: "geojson",
       data: (d.colombia ?? VACIA) as never,
+    });
+    // Sembrada con la seleccion que haya, y no vacia. Cambiar de mapa base
+    // recarga el estilo y vuelve a pasar por aqui: con `VACIA` la linea del
+    // territorio desaparecia al cambiar de mapa y no habia forma de recuperarla
+    // sin volver a elegir la secretaria.
+    m.addSource("territorio", {
+      type: "geojson",
+      data: territorioElegido().coleccion as never,
     });
     m.addSource("huellas", { type: "geojson", data: VACIA });
     m.addSource("sedes", {
@@ -597,6 +705,33 @@ export default function Mapa({
       },
     });
 
+    // El territorio de la secretaria elegida, punteado y suave.
+    //
+    // Punteado a proposito. Es la union de los municipios donde la secretaria
+    // tiene sedes, dibujada con el limite de geoBoundaries de 2020, y eso no es
+    // una frontera legal: si un municipio cambio de entidad certificada despues,
+    // esta linea no se entera. Una linea solida diria "hasta aqui llega su
+    // jurisdiccion" y seria una afirmacion mas fuerte que el dato.
+    //
+    // Sin relleno. Una mancha encima de la de intensidad haria que los dos
+    // tonos se sumaran y la banda de MMI dejaria de leerse, que es justo lo que
+    // esta pantalla no puede permitirse.
+    m.addLayer({
+      id: "territorio",
+      type: "line",
+      source: "territorio",
+      // Se siembra desde `capas` y no se deja en el valor por defecto. Cambiar
+      // de mapa base recarga el estilo y vuelve a pasar por aqui: con la linea
+      // apagada, volvia a aparecer sola.
+      layout: { visibility: visible(d.capas.territorio) },
+      paint: {
+        "line-color": d.tema === "claro" ? "#1c5cab" : "#86b6ef",
+        "line-width": 1.4,
+        "line-opacity": 0.75,
+        "line-dasharray": [2, 2],
+      },
+    });
+
     m.addLayer({
       id: "borde-grilla",
       type: "line",
@@ -664,6 +799,7 @@ export default function Mapa({
       type: "circle",
       source: "sedes",
       maxzoom: ZOOM_PIN,
+      filter: filtroSinGris(d.danesConPin) as never,
       layout: { visibility: visible(d.capas.sedes && pintaPorIvid(d.filtros)) },
       paint: {
         "circle-radius": [
@@ -684,6 +820,7 @@ export default function Mapa({
       type: "circle",
       source: "sedes",
       maxzoom: ZOOM_PIN,
+      filter: filtroSinGris(d.danesConPin) as never,
       layout: { visibility: visible(d.capas.sedes) },
       paint: {
         // Chicos a proposito: a escala nacional son 26.591 puntos y cualquier
@@ -702,6 +839,7 @@ export default function Mapa({
       type: "symbol",
       source: "sedes",
       minzoom: ZOOM_PIN,
+      filter: filtroSinGris(d.danesConPin) as never,
       layout: {
         visibility: visible(d.capas.sedes),
         "icon-image": pintaPorIvid(d.filtros)
@@ -766,7 +904,7 @@ export default function Mapa({
       source: "danos",
       minzoom: ZOOM_PIN,
       filter: filtroEstado(conDano(d.capas), d.capas.danosTodasLasBandas,
-                           d.capas.subtipos),
+                           d.capas.subtipos, d.capas.emisores),
       layout: {
         visibility: visible(d.capas.reportes),
         "icon-image": [
@@ -795,7 +933,7 @@ export default function Mapa({
       source: "danos",
       maxzoom: ZOOM_PIN,
       filter: filtroEstado(conDano(d.capas), d.capas.danosTodasLasBandas,
-                           d.capas.subtipos),
+                           d.capas.subtipos, d.capas.emisores),
       layout: { visibility: visible(d.capas.reportes) },
       paint: {
         // Bajados el 14 de agosto de 2026, con la entrada de la capa del MEN.
@@ -827,7 +965,7 @@ export default function Mapa({
       source: "danos",
       filter: filtroEstado(
         d.capas.estadosDano.includes("sin_dano") ? ["sin_dano"] : [],
-        d.capas.danosTodasLasBandas, d.capas.subtipos),
+        d.capas.danosTodasLasBandas, d.capas.subtipos, d.capas.emisores),
       layout: { visibility: visible(d.capas.reportes) },
       paint: {
         // Un pelo menor que el punto lleno, como estaba antes: el hueco no
@@ -1030,6 +1168,60 @@ export default function Mapa({
 
   useEffect(() => {
     cuandoListo((m) => {
+      if (!m.getLayer("sedes-punto")) return;
+      const f = filtroSinGris(danesConPin);
+      m.setFilter("sedes-punto", f);
+      m.setFilter("sedes-pin", f);
+      m.setFilter("sedes-realce", f);
+    });
+  }, [danesConPin]);
+
+  /** La linea del territorio y el encuadre, cuando cambia la secretaria elegida.
+   *
+   * El encuadre va aqui y no en el panel porque solo el mapa sabe su tamano. La
+   * columna de tarjetas mide 360 px y flota encima del mapa, asi que un
+   * `fitBounds` centrado deja media secretaria debajo del panel. Se le pasa el
+   * relleno de 380 px por la izquierda, y solo en pantalla ancha: en el telefono
+   * el panel no esta al lado sino abajo.
+   *
+   * Al quitar la ultima secretaria se vuelve a la vista inicial. Es la misma
+   * decision que toma `limpiaSecretarias` con las bandas: un rodeo por una
+   * secretaria no deja el mapa encuadrado en un sitio que nadie pidio.
+   *
+   * Pero solo si antes habia alguna. El geojson de territorios llega despues del
+   * primer dibujo, asi que este efecto corre una segunda vez con la seleccion
+   * todavia vacia: sin la guarda, esa corrida devolvia el mapa al encuadre
+   * inicial y se llevaba por delante lo que el usuario hubiera movido mientras
+   * cargaba.
+   */
+  useEffect(() => {
+    cuandoListo((m) => {
+      const f = m.getSource("territorio") as maplibregl.GeoJSONSource | undefined;
+      if (!f) return;
+      const { coleccion, caja } = territorioElegido();
+      f.setData(coleccion as never);
+      const habia = habiaTerritorio.current;
+      habiaTerritorio.current = caja != null;
+
+      if (!caja) {
+        if (habia) m.easeTo({ ...VISTA_INICIAL, duration: 600 });
+        return;
+      }
+      const ancha = window.innerWidth >= 768;
+      m.fitBounds([[caja[0], caja[1]], [caja[2], caja[3]]], {
+        padding: { top: 40, bottom: 40, right: 40, left: ancha ? 380 : 40 },
+        // Antioquia con sus 117 municipios va de latitud 5,4 a 8,9 y el ajuste
+        // exacto la deja al borde del recuadro. El tope evita el otro extremo:
+        // una secretaria de un solo municipio, como Armenia, se iria a zoom 13
+        // y se perderia el contexto de por donde queda.
+        maxZoom: 11,
+        duration: 800,
+      });
+    });
+  }, [secretarias, filtros.secretarias]);
+
+  useEffect(() => {
+    cuandoListo((m) => {
       const f = m.getSource("danos") as maplibregl.GeoJSONSource | undefined;
       if (f) {
         f.setData({ type: "FeatureCollection", features: rasgosDano() } as never);
@@ -1080,7 +1272,10 @@ export default function Mapa({
         capas.intensidad && seCortaEnElBorde(filtros.bandas) ? "visible" : "none",
       );
     });
-  }, [filtros, capas, danesConReporte, tema]);
+    // Las casillas de daño no entran: rehacer los pines en cada clic era lo
+    // que trababa el mapa. Color, IVID y bandas sí, porque cambian el dibujo
+    // de las 26 mil.
+  }, [filtros, capas.sedes, capas.intensidad, tema]);
 
   useEffect(() => {
     cuandoListo((m) => {
@@ -1093,24 +1288,33 @@ export default function Mapa({
       ver("sedes-punto", capas.sedes);
       ver("sedes-pin", capas.sedes);
       ver("sedes-realce", capas.sedes && pintaPorIvid(filtros));
+      ver("territorio", capas.territorio);
       ver("danos-punto", capas.reportes);
       ver("danos-pin", capas.reportes);
       ver("danos-sin", capas.reportes);
-      // Los estados se filtran aqui y no rehaciendo la fuente: son 141 puntos
-      // y volver a construir el GeoJSON en cada casilla haria parpadear el mapa.
-      const sinDano = capas.estadosDano.includes("sin_dano");
-      const conDanoAhora = capas.estadosDano.filter((e) => e !== "sin_dano");
-      // El recorte de intensidad y el subtipo de colapso viajan pegados al
-      // estado, en el mismo filtro, y con la misma funcion que uso el montaje.
-      const conRecorte = (estados: EstadoDano[]): Expr =>
-        filtroDanos(estados, capas.danosTodasLasBandas, capas.subtipos);
-      m.setFilter("danos-pin", conRecorte(conDanoAhora));
-      m.setFilter("danos-punto", conRecorte(conDanoAhora));
-      m.setFilter("danos-sin", conRecorte(sinDano ? ["sin_dano"] : []));
       ver("huellas-relleno", capas.huellas);
       ver("huellas-linea", capas.huellas);
     });
-  }, [capas]);
+  }, [capas.intensidad, capas.sedes, capas.territorio, capas.reportes,
+      capas.huellas, filtros]);
+
+  useEffect(() => {
+    cuandoListo((m) => {
+      if (!m.getLayer("danos-pin")) return;
+      // Los estados se filtran aqui y no rehaciendo la fuente: son mil y pico
+      // puntos y volver a construir el GeoJSON en cada casilla haria parpadear
+      // el mapa.
+      const sinDano = capas.estadosDano.includes("sin_dano");
+      const conDanoAhora = capas.estadosDano.filter((e) => e !== "sin_dano");
+      const conRecorte = (estados: EstadoDano[]): Expr =>
+        filtroDanos(estados, capas.danosTodasLasBandas, capas.subtipos,
+                    capas.emisores);
+      m.setFilter("danos-pin", conRecorte(conDanoAhora));
+      m.setFilter("danos-punto", conRecorte(conDanoAhora));
+      m.setFilter("danos-sin", conRecorte(sinDano ? ["sin_dano"] : []));
+    });
+  }, [capas.estadosDano, capas.subtipos, capas.emisores,
+      capas.danosTodasLasBandas]);
 
   useEffect(() => {
     cuandoListo((m) => {

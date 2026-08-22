@@ -12,11 +12,11 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
-import ControlDerecho from "@/components/ControlDerecho";
+import ControlDerecho, { TarjetaMapaBase } from "@/components/ControlDerecho";
 import FichaSede from "@/components/FichaSede";
 import { CAPAS_INICIALES } from "@/components/Mapa";
 import type { Capas } from "@/components/Mapa";
-import PanelIzquierdo from "@/components/PanelIzquierdo";
+import PanelIzquierdo, { TarjetaDanos } from "@/components/PanelIzquierdo";
 import { descarga } from "@/lib/csv";
 import {
   cargaBordeGrilla,
@@ -25,26 +25,39 @@ import {
   cargaEvento,
   cargaDanos,
   cargaReportes,
+  cargaSecretarias,
   cargaSedes,
   consultaEdicionMen,
+  cuentaDanosMarcados,
+  danesConDano,
+  danoMarcado,
   danosFuera,
   danosVisibles,
   filtra,
+  indiceMarco,
+  miles,
   resume,
+  resumeSin,
   sedesConDano,
+  sinOcultas,
 } from "@/lib/datos";
-import { FILTROS_INICIALES } from "@/lib/tipos";
+import { FILTROS_INICIALES, SUBTIPOS, reportePorSede } from "@/lib/tipos";
 import type {
+  ColeccionSecretarias,
   ColeccionSedes,
   Dano,
   Evento,
   Filtros,
   MapaBase,
   MetaMen,
+  RasgoSede,
   Reporte,
   Sede,
   Tema,
 } from "@/lib/tipos";
+
+const VACIAS: RasgoSede[] = [];
+const VACIO = resume([]);
 
 // MapLibre toca `window` al importarse, asi que no puede renderizarse en el
 // servidor.
@@ -63,6 +76,10 @@ export default function Pagina() {
   const [contornos, setContornos] = useState<unknown | null>(null);
   const [bordeGrilla, setBordeGrilla] = useState<unknown | null>(null);
   const [colombia, setColombia] = useState<unknown | null>(null);
+  // El territorio de cada secretaria, para dibujarlo al elegir una. Puede faltar
+  // sin que el mapa deje de funcionar: lo unico que se pierde es la linea.
+  const [territorios, setTerritorios] =
+    useState<ColeccionSecretarias | null>(null);
   const [mapaBase, setMapaBase] = useState<MapaBase>("claro");
   const [reportes, setReportes] = useState<Reporte[]>([]);
   const [danos, setDanos] = useState<Dano[]>([]);
@@ -90,8 +107,9 @@ export default function Pagina() {
       cargaColombia(),
       cargaReportes(),
       cargaDanos(),
+      cargaSecretarias(),
     ])
-      .then(([e, s, c, b, co, r, dn]) => {
+      .then(([e, s, c, b, co, r, dn, se]) => {
         setEvento(e as Evento);
         setColeccion(s as ColeccionSedes);
         setContornos(c);
@@ -101,6 +119,7 @@ export default function Pagina() {
         const d = dn as { danos: Dano[]; men: MetaMen | null };
         setDanos(d.danos);
         setMetaMen(d.men);
+        setTerritorios(se as ColeccionSecretarias | null);
       })
       .catch((e: Error) => setError(e.message));
 
@@ -146,17 +165,60 @@ export default function Pagina() {
     };
   }, [mapaBase, coleccion]);
 
-  const seleccionadas = useMemo(
-    () => (coleccion ? filtra(coleccion, filtros) : []),
-    [coleccion, filtros],
-  );
-  const resumen = useMemo(() => resume(seleccionadas), [seleccionadas]);
-
   // Los puntos de daño no dependen de la selección de sedes ni de que la capa de
   // intensidad esté encendida. Lo que sí respetan, salvo que se pida lo
   // contrario, es el recorte de bandas: ver `danosTodasLasBandas` en `Capas`.
-  const danosEnMapa = useMemo(() => danosVisibles(danos), [danos]);
-  const nDanosFuera = useMemo(() => danosFuera(danos), [danos]);
+  //
+  // Y respetan siempre la secretaría, porque eso no es un filtro sobre las
+  // escuelas sino el recorte de jurisdicción de toda la pantalla. Ver
+  // `danosVisibles`.
+  const danosEnMapa = useMemo(
+    () => danosVisibles(danos, filtros.secretarias),
+    [danos, filtros.secretarias],
+  );
+  const nDanosFuera = useMemo(
+    () => danosFuera(danos, filtros.secretarias),
+    [danos, filtros.secretarias],
+  );
+  // Las sedes que el mapa está dibujando con daño. Entra en la selección para
+  // que una escuela reportada no quede fuera del conteo por su banda de
+  // intensidad. El recorte de casillas se resta después, sobre el índice.
+  const conDano = useMemo(
+    () => danesConDano(danosEnMapa, capas.estadosDano, capas.subtipos),
+    [danosEnMapa, capas.estadosDano, capas.subtipos],
+  );
+  // Todas las que el reporte ganador afirma dañadas, sin mirar las casillas.
+  // El mapa las pinta de color y no de gris; la lista no cambia al tocar un
+  // subtipo, para no reescribir 26 mil rasgos en cada clic.
+  const danesAfirmado = useMemo(
+    () => danesConDano(danosEnMapa, ["colapso", "dano"], SUBTIPOS),
+    [danosEnMapa],
+  );
+  const danesConPin = useMemo(() => [...danesAfirmado], [danesAfirmado]);
+  // Las que tienen daño afirmado y ese daño está apagado. Salen de la
+  // selección para no reaparecer como sede gris y no inflar el 26.591.
+  const danesOcultas = useMemo(() => {
+    const ocultas = new Set<string>();
+    for (const dane of danesAfirmado) {
+      if (!conDano.has(dane)) ocultas.add(dane);
+    }
+    return ocultas;
+  }, [danesAfirmado, conDano]);
+
+  // Un solo recorrido de las 26 mil: bandas, secretaría, zona. Las casillas
+  // de daño no entran. Si entraran, cada clic reharía el GeoJSON y el resumen.
+  // El gris debajo del pin lo apaga `danesConPin` con un setFilter. El
+  // contador resta `danesOcultas` sobre el índice, sin volver a filtrar.
+  const sedesMarco = useMemo(
+    () => (coleccion ? filtra(coleccion, filtros, danesAfirmado) : []),
+    [coleccion, filtros, danesAfirmado],
+  );
+  const indice = useMemo(() => indiceMarco(sedesMarco), [sedesMarco]);
+  const resumen = useMemo(
+    () => resumeSin(indice, danesOcultas),
+    [indice, danesOcultas],
+  );
+
   // Los que de verdad se están dibujando, que es lo que tiene que contar el
   // contador de arriba a la derecha cuando la pantalla muestra solo daños.
   const danosPintados = useMemo(
@@ -179,40 +241,94 @@ export default function Pagina() {
    * filtros, mientras en el mapa lo único visible eran los puntos de daño.
    */
   const soloDanos = capas.reportes && !capas.sedes;
+  // Solo cuando la pantalla muestra únicamente daños. Armar los rasgos recorre
+  // las 52 mil sedes del marco para resolver ficha y matrícula, y no hace
+  // falta en cada clic de subtipo.
   const rasgosConDano = useMemo(
-    () => sedesConDano(coleccion, danosPintados, capas.estadosDano),
-    [coleccion, danosPintados, capas.estadosDano],
+    () => soloDanos
+      ? sedesConDano(coleccion, danosPintados, capas.estadosDano,
+                     capas.subtipos)
+      : VACIAS,
+    [soloDanos, coleccion, danosPintados, capas.estadosDano, capas.subtipos],
   );
-  const resumenDanos = useMemo(() => resume(rasgosConDano), [rasgosConDano]);
-  // Lo que cuenta el contador y lo que se lleva la descarga tienen que ser la
-  // misma lista. El botón de CSV vive debajo del número, y exportar otra cosa
-  // sería contradecirlo a un clic de distancia.
-  const contadas = soloDanos ? rasgosConDano : seleccionadas;
+  const resumenDanos = useMemo(
+    () => (soloDanos ? resume(rasgosConDano) : VACIO),
+    [soloDanos, rasgosConDano],
+  );
+
+  /** De la selección, cuántas sedes está el mapa dibujando con daño.
+   *
+   * Se cuenta contra `rasgosConDano`, que es exactamente lo que se dibuja, y no
+   * contra `conDano`. Los dos conjuntos casi siempre coinciden, pero `conDano`
+   * existe para otra cosa: es el permiso que deja pasar una sede con reporte
+   * aunque su banda esté apagada, así que no puede aplicarse el recorte de banda
+   * a sí mismo. Contando contra él, apagar "ver todas las sedes reportadas"
+   * dejaba el contador diciendo un número que el mapa ya no dibujaba.
+   *
+   * Así este número es un subconjunto de lo que cuenta la tarjeta de daños por
+   * construcción, y la diferencia entre los dos tiene una sola causa: las sedes
+   * con reporte que no están en el marco que exporta el script 23. Hoy son 47:
+   * 26 caen fuera de la grilla del ShakeMap, 8 tienen MMI por debajo de 4,0 y 13
+   * no están en el SIMAT de 2022. El mapa las dibuja igual, porque una fuente
+   * afirmando que una escuela se cayó no depende de que esté en nuestro marco.
+   * Medido con `scripts/45_cuadra_conteos.py`.
+   */
+  const nConDano = useMemo(
+    () => cuentaDanosMarcados(
+      danosPintados, capas.estadosDano, capas.subtipos, indice.porDane),
+    [danosPintados, capas.estadosDano, capas.subtipos, indice],
+  );
+  const nRasgosConDano = useMemo(
+    () => cuentaDanosMarcados(
+      danosPintados, capas.estadosDano, capas.subtipos),
+    [danosPintados, capas.estadosDano, capas.subtipos],
+  );
   const resumenContado = soloDanos ? resumenDanos : resumen;
 
   // El mismo recorte pero sin los sub-filtros de la última tarjeta. El relato
   // de "de la selección, N fueron encuestadas y el X % declaró avería" tiene
   // que seguir siendo verdad mientras se prende "no encuestadas": si se
   // calculara sobre lo filtrado, diría que cero de cero fueron encuestadas.
-  const resumenAmplio = useMemo(
+  const marcoAmplio = useMemo(
     () =>
       coleccion
-        ? resume(
-            filtra(coleccion, {
-              ...filtros,
-              fisica: "todas",
-              energia: "todas",
-              internet: "todas",
-              // El filtro por nivel de vulnerabilidad también es de esa
-              // tarjeta. Sin neutralizarlo, el promedio del índice se
-              // calcularía sobre los niveles que se acaban de marcar y
-              // devolvería el nivel elegido, y los conteos de cada fila dirían
-              // cero en las filas apagadas.
-              ividCategorias: [],
-            }),
-          )
-        : resume([]),
-    [coleccion, filtros],
+        ? filtra(coleccion, {
+            ...filtros,
+            fisica: "todas",
+            energia: "todas",
+            internet: "todas",
+            // El filtro por nivel de vulnerabilidad también es de esa
+            // tarjeta. Sin neutralizarlo, el promedio del índice se
+            // calcularía sobre los niveles que se acaban de marcar y
+            // devolvería el nivel elegido, y los conteos de cada fila dirían
+            // cero en las filas apagadas.
+            ividCategorias: [],
+          }, danesAfirmado)
+        : VACIAS,
+    [coleccion, filtros, danesAfirmado],
+  );
+  const indiceAmplio = useMemo(
+    () => indiceMarco(marcoAmplio),
+    [marcoAmplio],
+  );
+  const resumenAmplio = useMemo(
+    () => resumeSin(indiceAmplio, danesOcultas),
+    [indiceAmplio, danesOcultas],
+  );
+
+  // Cuantas de las sedes dibujadas con daño declaran tener un concepto tecnico
+  // disponible. Lo dice el pie de pantalla, y ahi esta escrito por que la frase
+  // se quedo en "declaran" y no dice "fueron inspeccionadas".
+  //
+  // Con la misma regla que el denominador que lo acompaña: el reporte que gana
+  // por precedencia y solo si su estado está marcado. Antes miraba cualquier
+  // reporte de cualquier sede, así que el numerador y el denominador de la misma
+  // frase se calculaban de dos formas distintas.
+  const nConConceptoTecnico = useMemo(
+    () => [...reportePorSede(danosPintados).values()].filter(
+      (d) => danoMarcado(d, capas.estadosDano, capas.subtipos)
+        && d.concepto_tecnico === true).length,
+    [danosPintados, capas.estadosDano, capas.subtipos],
   );
 
   const danesConReporte = useMemo(
@@ -327,8 +443,10 @@ export default function Pagina() {
         contornos={contornos}
         bordeGrilla={bordeGrilla}
         colombia={colombia}
+        secretarias={territorios}
         evento={evento}
-        sedes={seleccionadas}
+        sedes={sedesMarco}
+        danesConPin={danesConPin}
         danos={danosEnMapa}
         foco={foco}
         danesConReporte={danesConReporte}
@@ -352,23 +470,66 @@ export default function Pagina() {
         secretarias={secretarias}
         zonas={zonas}
         reportes={reportes}
+        sedes={sedesMarco}
+        ocultas={danesOcultas}
         danos={danosEnMapa}
         danosFuera={nDanosFuera}
         metaMen={metaMen}
         edicionMen={edicionMen}
         onIrASede={irASede}
-        onExportar={() => descarga(seleccionadas)}
+        onExportar={() => descarga(sinOcultas(sedesMarco, danesOcultas))}
         encuestadasPais={ENCUESTADAS_PAIS}
+        mapaBase={mapaBase}
+        onMapaBase={setMapaBase}
       />
 
       <div className="pointer-events-none absolute inset-x-2 top-2 z-20 flex flex-col items-stretch gap-2 md:inset-x-auto md:right-0 md:top-0 md:bottom-0 md:items-end md:p-3 md:pb-16">
         <ControlDerecho
           resumen={resumenContado}
+          conDano={soloDanos ? resumenDanos.sedes : nConDano}
+          // Con la pantalla en modo solo daños el número grande ya es el total
+          // de sedes dibujadas con daño, así que no queda ninguna fuera y no hay
+          // nada que explicar.
+          conDanoFuera={soloDanos ? 0 : nRasgosConDano - nConDano}
           soloDanos={soloDanos}
-          mapaBase={mapaBase}
-          onMapaBase={setMapaBase}
-          onExportar={() => descarga(contadas)}
+          onExportar={() => descarga(
+            soloDanos
+              ? sedesConDano(coleccion, danosPintados, capas.estadosDano,
+                             capas.subtipos)
+              : sinOcultas(sedesMarco, danesOcultas),
+          )}
         />
+
+        {/* Los daños quedan debajo del conteo, pegados a la cifra de la que
+            cuelgan, y con el mismo ancho: la franja derecha ajusta al contenido,
+            asi que sin decirle nada cada tarjeta medía lo suyo y la pila
+            quedaba con el borde izquierdo desigual. Los 240 px salen de
+            `md:w-60`, que es lo que mide la del conteo. Desplegada pasa de la
+            pantalla, asi que se desplaza por dentro; sin `min-h-0` un hijo
+            flexible no se deja encoger y el desbordamiento se iria por debajo
+            del borde.
+
+            Nada de esto en el telefono, donde la tarjeta sigue viviendo en la
+            hoja de abajo: ver el comentario del orden en `PanelIzquierdo`.
+
+            Y solo cuando no hay ficha abierta: las dos a la vez en la misma
+            columna dejan a cada una en un tercio de la altura. */}
+        {!sedeAbierta && (
+          <div className="pointer-events-auto hidden min-h-0 overflow-y-auto overscroll-contain md:block md:w-60">
+            <TarjetaDanos
+              capas={capas}
+              onCapas={setCapas}
+              filtros={filtros}
+              reportes={reportes}
+              danos={danosEnMapa}
+              danosFuera={nDanosFuera}
+              metaMen={metaMen}
+              edicionMen={edicionMen}
+              onIrASede={irASede}
+            />
+          </div>
+        )}
+
         {/* La ficha se desplaza sola. Si este contenedor tambien se desplazara,
             el encabezado pegajoso con el boton de cerrar se iria por arriba y
             quedaria fuera de la pantalla. */}
@@ -382,6 +543,13 @@ export default function Pagina() {
             />
           </div>
         )}
+
+        {/* Debajo de los daños, no entre el conteo y ellos. El mapa base es una
+            preferencia y no tiene que partir las dos lecturas de la columna. En
+            el teléfono vive en la hoja de abajo, pegado a la misma tarjeta. */}
+        <div className="pointer-events-auto hidden md:block md:w-60">
+          <TarjetaMapaBase mapaBase={mapaBase} onMapaBase={setMapaBase} />
+        </div>
       </div>
 
       {/* Los logos van en la misma franja de la atribución del mapa base, a su
@@ -414,12 +582,24 @@ export default function Pagina() {
         style={{ background: "var(--superficie)", color: "var(--tinta-3)" }}
       >
         {/* Lo del MMI se fue al bloque del MMI, que es donde se pregunta.
-            Y lo de la inspección se dice completo: decir "ninguna sede ha sido
-            inspeccionada" mientras el mapa marca 194 sedes con daño reportado
-            se leía como una contradicción. Lo que falta es la visita técnica
-            oficial, no que nadie haya mirado nada. */}
-        Ninguna sede de esta pantalla tiene inspección técnica oficial. Lo que se
-        marca son reportes de fuente, revisados uno por uno.{" "}
+
+            Esta frase decía que 16 sedes "tienen inspección técnica", y eso era
+            afirmar más de lo que dice el archivo. La casilla del formulario
+            pregunta si el concepto técnico está disponible, no si alguien fue a
+            mirar la sede después del sismo: puede ser de antes, y 12 de esas 16
+            declaran en la casilla siguiente que todavía requieren visita
+            técnica. Ahora dice lo que dice la casilla y nada más.
+
+            El número va escrito porque es pequeño. El día que sean muchas, esta
+            frase habrá que rehacerla. */}
+        <span className="num">{nConConceptoTecnico}</span> de las{" "}
+        {/* El mismo número que el encabezado de la tarjeta de daños, y sale del
+            mismo sitio. Decía `conDano.size`, que contaba con otra regla, y por
+            eso el pie hablaba de 1.794 sedes mientras la tarjeta contaba
+            1.791. */}
+        <span className="num">{miles(rasgosConDano.length)}</span> sedes con daño
+        reportado declaran tener un concepto técnico disponible. El resto son
+        reportes de fuente, revisados uno por uno.{" "}
         <Link href="/triaje" className="underline">
           Triaje de reportes
         </Link>

@@ -8,6 +8,7 @@
 
 import { reportePorSede } from "./tipos";
 import type {
+  ColeccionSecretarias,
   ColeccionSedes,
   Dano,
   EstadoDano,
@@ -35,6 +36,21 @@ export async function cargaContornos(): Promise<unknown> {
   const r = await fetch("datos/contornos_mmi.geojson");
   if (!r.ok) throw new Error("no se pudo leer datos/contornos_mmi.geojson");
   return r.json();
+}
+
+/** El territorio de cada secretaría de educación.
+ *
+ * Si falta, el mapa sigue funcionando y lo único que se pierde es la línea
+ * punteada al elegir una entidad. Es una capa que se agrega sobre un mapa que ya
+ * respondía su pregunta sin ella, igual que el contorno del país.
+ */
+export async function cargaSecretarias(): Promise<ColeccionSecretarias | null> {
+  try {
+    const r = await fetch("datos/secretarias.geojson");
+    return r.ok ? r.json() : null;
+  } catch {
+    return null;
+  }
 }
 
 /** El contorno del país. Si falta, el mapa sigue funcionando sin él. */
@@ -132,10 +148,42 @@ export async function cargaHuellas(dane: string): Promise<unknown | null> {
 
 // ---------------------------------------------------------------- filtrado --
 
-export function pasa(s: Sede, f: Filtros): boolean {
+export function pasa(
+  s: Sede,
+  f: Filtros,
+  conDano?: Set<string>,
+  ocultas?: Set<string>,
+): boolean {
+  // Una sede cuyo reporte ganador afirma daño, y ese daño está apagado en la
+  // tarjeta, no puede reaparecer como punto gris. Sin esto, apagar "afectación
+  // parcial" quitaba el pin de color y dejaba la misma escuela en grafito: el
+  // 26.591 no se movía y se leía como si el recorte no existiera.
+  if (ocultas?.has(s.dane)) return false;
+  // Con una secretaría elegida la banda deja de recortar y pasa a ser solo
+  // pintura. Es el cambio de pregunta: mientras se mira el sismo, la banda es la
+  // partición que decide de qué se está hablando; cuando se mira una entidad, sus
+  // escuelas son suyas completas y la intensidad es un atributo más de cada una.
+  // Esconder la mitad de un inventario porque el modelo dice que allí sacudió
+  // menos deja a esa entidad sin poder ver su propio territorio.
+  //
+  // Así el control de bandas sigue sirviendo para lo que de verdad se le pide
+  // ahí: pintar la mancha encima para leer qué parte del territorio recibió
+  // cuánta sacudida. Encender una banda no hace aparecer sedes nuevas.
+  const recortaPorBanda = f.secretarias.length === 0;
+
   // La banda de intensidad manda: si no esta prendida en el control de capas,
   // la sede ni se dibuja ni se cuenta. Es la misma particion que pinta el mapa.
-  if (!f.bandas.includes(s.banda)) return false;
+  //
+  // Con una excepcion: una sede que alguien reportó dañada se cuenta aunque su
+  // banda esté apagada. Es el mismo argumento con el que la capa de daños dejó
+  // de depender de la selección (ver `danosVisibles`): la banda es un modelo de
+  // sacudida y el reporte es una fuente afirmando que esa escuela se dañó, así
+  // que apagar el modelo no puede apagar la evidencia. Sin esta excepción, con
+  // la pantalla abierta en 6,0 y 6,5, elegir una secretaría daba un conteo que
+  // dejaba fuera escuelas cuyo punto de daño el mapa estaba dibujando.
+  if (recortaPorBanda && !f.bandas.includes(s.banda) && !conDano?.has(s.dane)) {
+    return false;
+  }
   if (f.secretarias.length && !f.secretarias.includes(s.secretaria ?? "")) {
     return false;
   }
@@ -179,8 +227,67 @@ export function pasa(s: Sede, f: Filtros): boolean {
   return true;
 }
 
-export function filtra(col: ColeccionSedes, f: Filtros): RasgoSede[] {
-  return col.features.filter((x) => pasa(x.properties, f));
+export function filtra(
+  col: ColeccionSedes,
+  f: Filtros,
+  conDano?: Set<string>,
+  ocultas?: Set<string>,
+): RasgoSede[] {
+  return col.features.filter((x) => pasa(x.properties, f, conDano, ocultas));
+}
+
+/** Si el mapa esta dibujando este reporte: estado marcado y subtipo encendido.
+ *
+ * Es la misma regla que `filtroDanos` aplica en el mapa, escrita aparte para que
+ * todo lo que cuenta sedes la use en vez de reescribirla. Estaba reescrita en
+ * seis sitios y en los seis se habia quedado a medias, mirando solo el estado:
+ * con "con daño" marcado y de su desglose solo "riesgo inminente", el mapa
+ * dibujaba 184 puntos y el contador, la tarjeta, el resumen del Valle y el CSV
+ * seguian hablando de 1.595 sedes.
+ *
+ * El subtipo vacio pasa siempre. Es el de `sin_dano` y `sin_verificar`, que no
+ * tienen desglose, y tambien el de cualquier reporte que llegue sin clasificar:
+ * exigirle estar en la lista lo borraria de la cuenta en cuanto alguien tocara
+ * un desglose que no es el suyo.
+ */
+export function danoMarcado(
+  d: Dano,
+  estados: EstadoDano[],
+  subtipos: string[],
+): boolean {
+  if (!estados.includes(d.estado)) return false;
+  const t = d.subtipo ?? "";
+  return t === "" || subtipos.includes(t);
+}
+
+/** Los codigos DANE de las sedes que el mapa esta dibujando con daño.
+ *
+ * Se calcula sobre los daños ya recortados por secretaría y por estado, que es
+ * lo que de verdad se ve. Si se calculara sobre todos los daños cargados, el
+ * conteo de sedes traería de vuelta escuelas cuyo punto la pantalla no dibuja.
+ *
+ * Aplica la precedencia de fuente, y esto es lo que arregla el 21 de agosto de
+ * 2026. Antes miraba el estado de cualquier reporte de la sede, y con eso tres
+ * escuelas contaban como dañadas mientras el mapa las pintaba sin daño: San
+ * Juan Bautista de La Salle y La Sultana en Manizales, y el INEM Julián Motta
+ * Salas en Neiva. En las tres el MEN dice que no hay daño y una noticia dice que
+ * sí; la precedencia se queda con el MEN, que es quien pinta el punto, y el
+ * conteo se quedaba con la noticia. De ahí salía que el pie de pantalla dijera
+ * 1.794 sedes con daño mientras la tarjeta dibujaba 1.791 puntos.
+ *
+ * La regla es la del mapa: manda el reporte que gana, uno por sede. Lo que dijo
+ * la otra fuente no se pierde, sigue entero en la ficha de la sede.
+ */
+export function danesConDano(
+  danos: Dano[],
+  estados: EstadoDano[],
+  subtipos: string[],
+): Set<string> {
+  return new Set(
+    [...reportePorSede(danos).values()]
+      .filter((d) => danoMarcado(d, estados, subtipos))
+      .map((d) => d.dane),
+  );
 }
 
 /** Los daños que se dibujan. Una sola condición: que haya dónde dibujarlos.
@@ -225,9 +332,27 @@ export function filtra(col: ColeccionSedes, f: Filtros): RasgoSede[] {
  * para lo que se dibuja al abrir, y eso ya lo resuelve `CAPAS_INICIALES`, que
  * abre solo en colapso y daño. El estado lo filtran las casillas, que es donde
  * quien mira puede verlo y cambiarlo.
+ *
+ * La secretaría es la única excepción, y no contradice nada de lo anterior. Los
+ * demás filtros son hipótesis sobre las escuelas: qué tan fuerte sacudió, qué
+ * tan vulnerable es el edificio, si el FFIE la visitó. Elegir una secretaría no
+ * es una hipótesis, es decir de quién se está hablando. Un mapa que dice estar
+ * mirando el Valle del Cauca y dibuja un colapso en Manizales no muestra
+ * evidencia de más: contradice su propio recorte.
  */
-export function danosVisibles(danos: Dano[]): Dano[] {
-  return danos.filter((d) => d.lon != null && d.lat != null);
+export function danosVisibles(danos: Dano[], secretarias: string[] = []): Dano[] {
+  return danos.filter(
+    (d) =>
+      d.lon != null &&
+      d.lat != null &&
+      enSecretaria(d, secretarias),
+  );
+}
+
+/** Si el daño cae dentro de las secretarías elegidas. Sin ninguna elegida, la
+ *  pantalla no está recortada por jurisdicción y todo pasa. */
+export function enSecretaria(d: Dano, secretarias: string[]): boolean {
+  return !secretarias.length || secretarias.includes(d.secretaria ?? "");
 }
 
 /** Las sedes con reporte que no hay forma de dibujar, contadas por sede.
@@ -247,12 +372,13 @@ export function danosVisibles(danos: Dano[]): Dano[] {
  * en el directorio, y el MEN sí las ubica. Contando por reporte, esas cinco se
  * seguían declarando no dibujables mientras el mapa las estaba dibujando.
  */
-export function danosFuera(danos: Dano[]): number {
+export function danosFuera(danos: Dano[], secretarias: string[] = []): number {
+  const dentro = danos.filter((d) => enSecretaria(d, secretarias));
   const dibujables = new Set(
-    danos.filter((d) => d.lon != null && d.lat != null).map((d) => d.dane),
+    dentro.filter((d) => d.lon != null && d.lat != null).map((d) => d.dane),
   );
   return new Set(
-    danos.map((d) => d.dane).filter((k) => !dibujables.has(k)),
+    dentro.map((d) => d.dane).filter((k) => !dibujables.has(k)),
   ).size;
 }
 
@@ -284,6 +410,7 @@ export function sedesConDano(
   col: ColeccionSedes | null,
   danos: Dano[],
   estados: EstadoDano[],
+  subtipos: string[],
 ): RasgoSede[] {
   const peor = reportePorSede(danos.filter((d) => d.lon != null && d.lat != null));
   const enColeccion = new Map(
@@ -291,7 +418,7 @@ export function sedesConDano(
   );
   const salida: RasgoSede[] = [];
   for (const d of peor.values()) {
-    if (!estados.includes(d.estado)) continue;
+    if (!danoMarcado(d, estados, subtipos)) continue;
     const f = enColeccion.get(d.dane);
     if (f) {
       salida.push(f);
@@ -528,6 +655,109 @@ export function resume(rasgos: RasgoSede[]): Resumen {
   r.secretarias = etc.size;
   r.ividMedia = r.ividN ? r.ividMedia / r.ividN : 0;
   return r;
+}
+
+/** Índice de un marco ya filtrado, para restar sedes sin volver a recorrerlo.
+ *
+ * Un clic en un subtipo de daño no puede volver a filtrar las 26 mil sedes ni
+ * a resumirlas: el recorte de bandas y secretaría no cambió. Lo que cambia es
+ * un conjunto chico de códigos DANE que dejan de pintarse. Este índice deja
+ * restarlos en tiempo proporcional a ese conjunto.
+ */
+export type IndiceMarco = {
+  porDane: Map<string, RasgoSede>;
+  resumen: Resumen;
+  mpios: Map<string, number>;
+  secretarias: Map<string, number>;
+};
+
+export function indiceMarco(rasgos: RasgoSede[]): IndiceMarco {
+  const porDane = new Map<string, RasgoSede>();
+  const mpios = new Map<string, number>();
+  const secretarias = new Map<string, number>();
+  for (const f of rasgos) {
+    porDane.set(f.properties.dane, f);
+    const mk = `${f.properties.depto}|${f.properties.mpio}`;
+    mpios.set(mk, (mpios.get(mk) ?? 0) + 1);
+    const sec = f.properties.secretaria;
+    if (sec) secretarias.set(sec, (secretarias.get(sec) ?? 0) + 1);
+  }
+  return { porDane, resumen: resume(rasgos), mpios, secretarias };
+}
+
+/** El resumen del marco menos las sedes apagadas en la tarjeta de daños. */
+export function resumeSin(indice: IndiceMarco, ocultas: Set<string>): Resumen {
+  if (ocultas.size === 0) return indice.resumen;
+  const quitar: RasgoSede[] = [];
+  const mpios = new Map(indice.mpios);
+  const secretarias = new Map(indice.secretarias);
+  for (const dane of ocultas) {
+    const f = indice.porDane.get(dane);
+    if (!f) continue;
+    quitar.push(f);
+    const s = f.properties;
+    const mk = `${s.depto}|${s.mpio}`;
+    const nm = (mpios.get(mk) ?? 1) - 1;
+    if (nm <= 0) mpios.delete(mk);
+    else mpios.set(mk, nm);
+    if (s.secretaria) {
+      const ne = (secretarias.get(s.secretaria) ?? 1) - 1;
+      if (ne <= 0) secretarias.delete(s.secretaria);
+      else secretarias.set(s.secretaria, ne);
+    }
+  }
+  if (quitar.length === 0) return indice.resumen;
+  const q = resume(quitar);
+  const b = indice.resumen;
+  const ividN = b.ividN - q.ividN;
+  return {
+    sedes: b.sedes - q.sedes,
+    matricula: b.matricula - q.matricula,
+    matriculaDe2022: b.matriculaDe2022 - q.matriculaDe2022,
+    noOperan: b.noOperan - q.noOperan,
+    ividN,
+    ividMedia: ividN ? (b.ividMedia * b.ividN - q.ividMedia * q.ividN) / ividN : 0,
+    ividPorCategoria: b.ividPorCategoria.map((n, i) => n - q.ividPorCategoria[i]),
+    encuestadas: b.encuestadas - q.encuestadas,
+    sinEnergia: b.sinEnergia - q.sinEnergia,
+    matriculaSinEnergia: b.matriculaSinEnergia - q.matriculaSinEnergia,
+    sinInternet: b.sinInternet - q.sinInternet,
+    matriculaSinInternet: b.matriculaSinInternet - q.matriculaSinInternet,
+    sinCoordVerificada: b.sinCoordVerificada - q.sinCoordVerificada,
+    municipios: mpios.size,
+    secretarias: secretarias.size,
+  };
+}
+
+/** Las del marco que siguen visibles. Solo se arma al exportar, no en cada clic. */
+export function sinOcultas(
+  rasgos: RasgoSede[],
+  ocultas: Set<string>,
+): RasgoSede[] {
+  if (ocultas.size === 0) return rasgos;
+  return rasgos.filter((f) => !ocultas.has(f.properties.dane));
+}
+
+/** Cuántos daños pintados están marcados y tienen coordenada.
+ *
+ * Un ganador por sede, la misma regla que `sedesConDano`, sin armar los
+ * rasgos. `enMarco` recorta a las que también están en la selección. */
+export function cuentaDanosMarcados(
+  danos: Dano[],
+  estados: EstadoDano[],
+  subtipos: string[],
+  enMarco?: Set<string> | Map<string, unknown>,
+): number {
+  let n = 0;
+  const peor = reportePorSede(
+    danos.filter((d) => d.lon != null && d.lat != null),
+  );
+  for (const d of peor.values()) {
+    if (!danoMarcado(d, estados, subtipos)) continue;
+    if (enMarco && !enMarco.has(d.dane)) continue;
+    n += 1;
+  }
+  return n;
 }
 
 // ------------------------------------------------------------ vocabulario --

@@ -74,6 +74,31 @@ export type ColeccionSedes = {
   features: RasgoSede[];
 };
 
+/** El territorio de una secretaría de educación: los municipios donde tiene
+ *  sedes, unidos en un solo polígono. Lo produce `scripts/44_limites_secretarias.py`.
+ *
+ *  No es un mapa administrativo. Los límites son los de geoBoundaries de 2020 y
+ *  la pertenencia se dedujo de dónde caen las sedes del directorio, así que la
+ *  línea se dibuja punteada: es una referencia de hasta dónde mirar, no una
+ *  frontera legal. */
+export type RasgoSecretaria = {
+  type: "Feature";
+  properties: {
+    secretaria: string;
+    municipios: number;
+    nombres: string[];
+    /** [oeste, sur, este, norte]. La calcula el script para que el mapa pueda
+     *  encuadrar sin recorrer un polígono de miles de vértices. */
+    caja: [number, number, number, number];
+  };
+  geometry: unknown;
+};
+
+export type ColeccionSecretarias = {
+  type: "FeatureCollection";
+  features: RasgoSecretaria[];
+};
+
 export type Evento = {
   id: string;
   magnitud: number;
@@ -139,7 +164,7 @@ export type FuenteDano = "hot" | "oficial" | "noticia";
  *  la capa del MEN las declara en afectacion parcial. Fundirlos en un solo
  *  rotulo borraria esa discrepancia, que es informacion.
  */
-export type EmisorDano = "MEN" | "BID" | "HOT" | "";
+export type EmisorDano = "MEN" | "BID" | "HOT" | "SE_VALLE" | "";
 
 /** Los cuatro estados posibles, cerrados a proposito.
  *
@@ -209,6 +234,11 @@ export type Dano = {
   establecimiento?: string;
   mpio: string;
   depto: string;
+  /** La entidad territorial certificada que responde por la sede. Viaja con el
+   *  daño y no se busca en la colección de sedes porque hay reporte de sedes
+   *  que esa colección no tiene: sin este campo, elegir una secretaría dejaría
+   *  esos puntos dibujados sobre un mapa que dice estar mirando otra cosa. */
+  secretaria?: string;
   /** Nulos cuando la sede queda fuera de la grilla del ShakeMap del USGS. Nulo
    *  no es cero: significa que de ahi el modelo del sismo no dice nada, y por
    *  eso esas sedes no se dibujan. */
@@ -234,6 +264,82 @@ export type Dano = {
   institucion_reportada?: string;
   /** Cuantas sedes tiene la institucion sobre la que se afirmo. */
   n_sedes_institucion?: number;
+
+  // --- Solo del diagnóstico de la Secretaría del Valle ---------------------
+  //
+  // Es la única fuente que declara estado operativo, y no se deduce del estado
+  // del edificio: hay sedes en pie que no están dando clase y sedes con colapso
+  // parcial que siguen funcionando en otro bloque.
+  //
+  // Los tres estados posibles son sí, no y sin responder, y por eso son
+  // `boolean | null` y no `boolean`. 38 de las 570 sedes dejaron estas casillas
+  // en blanco: contarlas como "no" convertiría una pregunta sin responder en una
+  // respuesta.
+
+  /** Si ya existe un concepto técnico sobre la sede, o sea si alguien
+   *  calificado fue a mirarla. Son 16 sedes, las primeras del proyecto con una
+   *  inspección detrás. */
+  concepto_tecnico?: boolean | null;
+  /** Si la sede sigue esperando visita técnica. 497 dicen que sí. */
+  requiere_visita?: boolean | null;
+  /** Si la sede está dando clase hoy. 462 dicen que no. */
+  presta_servicio?: boolean | null;
+  clases_suspendidas?: boolean | null;
+  requiere_evacuacion?: boolean | null;
+  requiere_reubicacion?: boolean | null;
+  requiere_prioridad?: boolean | null;
+  albergue?: boolean | null;
+  estudiantes_afectados?: number | null;
+  ambientes_afectados?: number | null;
+  /** Porcentaje estimado de afectación de la sede, en escala 0 a 100, tal como
+   *  lo estimó quien llenó el formulario.
+   *
+   *  En el Excel viene como fracción, porque la celda tiene formato de
+   *  porcentaje: 0,5 en el archivo es el 50% que vio el rector en la pantalla.
+   *  La conversión la hace `porcentaje()` en el script 27, y ahí está escrito
+   *  por qué la regla es esa.
+   *
+   *  Nulo en las 50 sedes que contestaron "SIN RESPUESTA". Nulo no es cero: cero
+   *  lo declararon seis sedes que dijeron que no hay afectación, y eso es una
+   *  respuesta. */
+  pct_afectacion?: number | null;
+  acciones_etc?: string;
+  /** Cuántas filas del diagnóstico hablan de esta sede. Mayor que 1 cuando el
+   *  rector describió bloques por separado. */
+  filas_diagnostico?: number;
+
+  /** Con qué regla se le puso el código DANE a esta fila, y con qué puntaje.
+   *
+   * Solo lo traen las fuentes cuyo emparejamiento hicimos nosotros. El MEN no lo
+   * necesita porque llega con el código puesto. El archivo del Valle llega con
+   * el nombre que escribió el rector, así que un `difuso_ie` es una propuesta y
+   * la ficha tiene que decirlo en vez de presentar la asignación como un hecho.
+   */
+  emparejamiento?: string;
+  emparejamiento_puntaje?: number | null;
+};
+
+/** Si el código DANE de este reporte lo puso una máquina por parecido de
+ *  nombre. Es lo que separa una propuesta de una asignación que trajo la
+ *  fuente. */
+export function emparejamientoDudoso(d: Dano): boolean {
+  return (d.emparejamiento ?? "").startsWith("difuso");
+}
+
+/** Cómo se dice en pantalla de dónde salió el código DANE de un reporte. */
+export const NOMBRE_EMPAREJAMIENTO: Record<string, string> = {
+  dane_en_texto: "el rector escribió el código DANE",
+  exacto_ie: "nombre exacto dentro de la institución",
+  exacto_depto: "nombre exacto dentro de la institución",
+  exacto_mpio: "nombre exacto dentro del municipio",
+  difuso_ie: "por parecido de nombre, dentro de la institución",
+  difuso_depto: "por parecido de nombre, dentro de la institución",
+  difuso_mpio: "por parecido de nombre, dentro del municipio",
+  exacto_ie_repetido: "nombre exacto; otra fila apunta a la misma sede",
+  difuso_ie_repetido: "por parecido; otra fila apunta a la misma sede",
+  difuso_depto_repetido: "por parecido; otra fila apunta a la misma sede",
+  unica_libre: "era la única sede de la institución sin asignar",
+  principal: "el rector señaló la sede principal sin nombrarla",
 };
 
 /** Del mas grave al menos grave. Ordena las listas que se leen de arriba abajo,
@@ -274,8 +380,35 @@ export function mandaSobre(a: Dano, b: Dano): boolean {
   const pa = PRECEDENCIA_FUENTE[a.fuente] ?? 0;
   const pb = PRECEDENCIA_FUENTE[b.fuente] ?? 0;
   if (pa !== pb) return pa > pb;
+  const ea = PRECEDENCIA_EMISOR[a.emisor ?? ""] ?? 0;
+  const eb = PRECEDENCIA_EMISOR[b.emisor ?? ""] ?? 0;
+  if (ea !== eb) return ea > eb;
   return GRAVEDAD[a.estado] > GRAVEDAD[b.estado];
 }
+
+/** Quién manda dentro de `oficial`, cuando dos entidades hablan de la misma
+ *  sede.
+ *
+ *  La secretaría de educación del territorio manda sobre el agregador nacional.
+ *  No es que el MEN informe peor: su capa sale de un formulario que el propio
+ *  Ministerio declara no exhaustivo, mientras que la secretaría consolidó las
+ *  respuestas de sus rectores, con corte posterior y con el detalle operativo
+ *  que el tablero nacional no pide. Cuando las dos hablan de la misma sede, la
+ *  que responde por esa sede es la secretaría.
+ *
+ *  Cambia cosas en las dos direcciones y esa fue la decisión. De las 62 sedes
+ *  del Valle donde hablan dos fuentes, solo 16 coinciden exacto: la Secretaría
+ *  sube tres a colapso total y baja Restrepo de colapso total a riesgo
+ *  inminente. Lo que dijo la otra fuente sigue en la ficha, con su nombre y su
+ *  fecha, y deja de pintar el punto.
+ *
+ *  Es la misma regla que aplica `manda()` en `scripts/27_danos_reportados.py`.
+ *  Las dos tienen que decir lo mismo. */
+export const PRECEDENCIA_EMISOR: Record<string, number> = {
+  SE_VALLE: 2,
+  MEN: 1,
+  BID: 1,
+};
 
 /** El reporte que pinta cada sede, uno por codigo DANE. */
 export function reportePorSede(danos: Dano[]): Map<string, Dano> {
@@ -289,16 +422,31 @@ export function reportePorSede(danos: Dano[]): Map<string, Dano> {
 
 export const NOMBRE_FUENTE: Record<FuenteDano, string> = {
   hot: "Registro fotográfico HOT",
-  oficial: "Reportes oficiales (MEN y BID)",
+  oficial: "Reportes oficiales (secretarías, MEN y BID)",
   noticia: "Noticias",
 };
 
 /** Como se nombra cada emisor en pantalla. */
 export const NOMBRE_EMISOR: Record<string, string> = {
   MEN: "Ministerio de Educación Nacional",
+  SE_VALLE: "Secretaría de Educación del Valle del Cauca",
   BID: "BID, reporte del PTIES",
   HOT: "ChatMap (HOT)",
 };
+
+/** El nombre corto, para las casillas del filtro y las pastillas. El largo no
+ *  cabe en una fila de 360 px de ancho. */
+export const EMISOR_CORTO: Record<string, string> = {
+  MEN: "MEN",
+  SE_VALLE: "Secretaría del Valle",
+  BID: "BID (PTIES)",
+  HOT: "ChatMap",
+};
+
+/** Los emisores en el orden en que se leen en el filtro: los que responden por
+ *  el territorio primero, el agregador nacional despues, y al final lo que no
+ *  afirma daño. */
+export const EMISORES: EmisorDano[] = ["SE_VALLE", "MEN", "BID", "HOT"];
 
 /** De cuando es la capa del MEN que dibuja el mapa, y donde vive el original.
  *
@@ -448,9 +596,14 @@ export type Filtros = {
 };
 
 export const FILTROS_INICIALES: Filtros = {
-  // Abre en 6,0 y 6,5, que es donde el USGS situa el inicio del dano
-  // estructural visible. Las bandas mas bajas quedan a un clic.
-  bandas: [6.0, 6.5],
+  // Las seis encendidas. Abria en 6,0 y 6,5, que es donde el USGS situa el
+  // inicio del dano estructural visible, y el argumento era bueno para un mapa
+  // de sacudida: por debajo de 6,0 no se espera dano. Pero la banda tambien
+  // recorta las escuelas que se cuentan, y ahi el corte hacia otra cosa: dejaba
+  // fuera de la pantalla de arranque las sedes de las cuatro bandas bajas sin
+  // que nada dijera que existian. Quien quiera el recorte estrecho lo tiene a
+  // dos clics en "Quitar todas" y volver a marcar las dos altas.
+  bandas: [4.0, 4.5, 5.0, 5.5, 6.0, 6.5],
   zonas: [],
   // Vacio es "todas", incluidas las que ya no operan. Una escuela liquidada con
   // el edificio en pie sigue importando despues de un sismo: puede ser

@@ -16,7 +16,7 @@
 
 import { useEffect } from "react";
 
-import Imagen from "@/components/Imagen";
+import Imagen, { urlsDeFoto } from "@/components/Imagen";
 import { COLOR_FUENTE } from "@/components/Mapa";
 import {
   CALIDAD_COORD,
@@ -31,6 +31,8 @@ import {
 import {
   GRAVEDAD,
   NOMBRE_EMISOR,
+  NOMBRE_EMPAREJAMIENTO,
+  emparejamientoDudoso,
   NOMBRE_FUENTE,
   nombreFino,
   PRECEDENCIA_FUENTE,
@@ -409,6 +411,70 @@ function Declaracion({ dano: d }: { dano: Dano }) {
           PTIES: {d.impacto_ptie}
         </p>
       )}
+
+      {/* Estado operativo y de inspección. Van en pastillas y no en prosa
+          porque son casillas de un formulario, y porque son lo primero que se
+          busca al abrir una sede: si hay clase y si alguien fue a mirarla.
+
+          Sin visita técnica no es lo mismo que sin concepto técnico disponible,
+          y por eso la pastilla dice lo que dijo la casilla. Nulo no pinta nada:
+          38 de las 570 sedes del Valle dejaron esto en blanco, y una pastilla
+          que dijera "no" ahí convertiría una pregunta sin responder en una
+          respuesta. */}
+      <Operativas d={d} />
+
+      {d.acciones_etc && (
+        <p className="mt-1 text-[11px]" style={{ color: "var(--tinta-2)" }}>
+          Acciones de la secretaría: {d.acciones_etc.toLowerCase()}
+        </p>
+      )}
+
+      {/* La foto del reporte, que hasta hoy se quedaba en el Excel.
+          Son 509 de las 570 sedes del Valle, subidas al formulario por quien
+          diligenció el diagnóstico. Es lo único de toda la fuente que muestra la
+          afectación en vez de describirla, y al lado de una casilla que dice
+          "afectación parcial" vale más que cualquier otro campo.
+
+          El enlace al original se deja visible: la miniatura sirve para mirar,
+          no para medir un daño, y quien tenga que decidir sobre esta sede
+          necesita la imagen completa. */}
+      {urlsDeFoto(d.url_foto).map((u, i) => (
+        <div key={u} className="mt-1.5">
+          <Imagen
+            url={u}
+            alt={`Fotografía de la afectación reportada en ${d.sede}`}
+            className="w-full rounded border"
+            style={{ borderColor: "var(--linea)" }}
+          />
+          <a
+            href={u}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-0.5 inline-block text-[11px] underline"
+            style={{ color: "var(--tinta-3)" }}
+          >
+            {urlsDeFoto(d.url_foto).length > 1
+              ? `ver la foto ${i + 1} en su origen`
+              : "ver la foto en su origen"}{" "}
+            ↗
+          </a>
+        </div>
+      ))}
+
+      {/* Cómo se le puso el código DANE a este reporte. Solo aparece cuando lo
+          pusimos nosotros por parecido de nombre, que es cuando la asignación es
+          una propuesta y no un dato que trajo la fuente. El MEN no aparece
+          nunca aquí: su capa llega con el código puesto. */}
+      {emparejamientoDudoso(d) && (
+        <p className="mt-1 text-[11px]" style={{ color: "var(--tinta-3)" }}>
+          El diagnóstico no trae código DANE. Esta sede se emparejó{" "}
+          {NOMBRE_EMPAREJAMIENTO[d.emparejamiento ?? ""] ?? "por parecido de nombre"}
+          {d.emparejamiento_puntaje != null
+            ? `, con un parecido de ${Math.round(d.emparejamiento_puntaje)} sobre 100`
+            : ""}
+          . Está sin confirmar.
+        </p>
+      )}
       {/* De dónde salió el punto. Solo se dice cuando no salió del directorio,
           que es el caso raro: son sedes reportadas sin coordenada propia, y
           quien vaya a ir hasta allá tiene derecho a saber que la ubicación la
@@ -431,6 +497,90 @@ function Declaracion({ dano: d }: { dano: Dano }) {
         >
           {d.titular ?? "ver la fuente"} ↗
         </a>
+      )}
+    </div>
+  );
+}
+
+/** Las pastillas de estado operativo de una declaración.
+ *
+ * Hoy solo las trae el diagnóstico de la Secretaría del Valle, que es la única
+ * fuente que pregunta por la operación y no solo por el edificio. Cuando entren
+ * otras secretarías, esto ya no habrá que tocarlo: lo que decide es si el campo
+ * viene, no de quién viene.
+ *
+ * El orden no es casual: primero si hay clase, que es lo que le pasa hoy a los
+ * estudiantes, y después si alguien fue a mirar, que es lo que decide cuándo
+ * vuelve a haberla.
+ */
+function Operativas({ d }: { d: Dano }) {
+  const p: { texto: string; tono: "malo" | "bueno" | "neutro" }[] = [];
+  if (d.presta_servicio === false) p.push({ texto: "sin clases", tono: "malo" });
+  if (d.presta_servicio === true) {
+    p.push({ texto: "prestando servicio", tono: "bueno" });
+  }
+  if (d.concepto_tecnico === true) {
+    p.push({ texto: "con concepto técnico", tono: "bueno" });
+  } else if (d.requiere_visita === true) {
+    p.push({ texto: "sin visita técnica", tono: "malo" });
+  } else if (d.concepto_tecnico === false) {
+    p.push({ texto: "sin concepto técnico", tono: "neutro" });
+  }
+  if (d.requiere_evacuacion === true) {
+    p.push({ texto: "requiere evacuación", tono: "malo" });
+  }
+  if (d.requiere_reubicacion === true) {
+    p.push({ texto: "requiere reubicación", tono: "malo" });
+  }
+  if (d.albergue === true) p.push({ texto: "usada como albergue", tono: "neutro" });
+  if (!p.length) return null;
+
+  const tono = (t: string) =>
+    t === "malo" ? "var(--critico)"
+      : t === "bueno" ? "var(--cima)" : "var(--tinta-3)";
+
+  return (
+    <div className="mt-1.5">
+      <div className="flex flex-wrap gap-1">
+        {p.map((x) => (
+          <span
+            key={x.texto}
+            className="rounded-full border px-2 py-0.5 text-[10px]"
+            style={{ borderColor: tono(x.tono), color: tono(x.tono) }}
+          >
+            {x.texto}
+          </span>
+        ))}
+      </div>
+      {(d.ambientes_afectados || d.estudiantes_afectados) ? (
+        <p className="mt-1 text-[11px]" style={{ color: "var(--tinta-2)" }}>
+          {d.ambientes_afectados ? (
+            <>
+              <span className="num">{d.ambientes_afectados}</span>{" "}
+              {d.ambientes_afectados === 1 ? "ambiente afectado" : "ambientes afectados"}
+            </>
+          ) : null}
+          {d.ambientes_afectados && d.estudiantes_afectados ? ", " : null}
+          {d.estudiantes_afectados ? (
+            <>
+              <span className="num">{d.estudiantes_afectados}</span>{" "}
+              {d.estudiantes_afectados === 1
+                ? "estudiante afectado" : "estudiantes afectados"}
+            </>
+          ) : null}
+        </p>
+      ) : null}
+      {/* El porcentaje va aparte y dice quién lo estimó. Es la única cifra de la
+          ficha que no cuenta cosas sino que las pondera, y viene de una casilla
+          que llenó quien diligenció el formulario, no de una medición. Sin decir
+          eso, un "70% de la sede afectada" se lee como el resultado de una
+          inspección. */}
+      {d.pct_afectacion != null && (
+        <p className="mt-0.5 text-[11px]" style={{ color: "var(--tinta-2)" }}>
+          Afectación estimada del{" "}
+          <span className="num">{d.pct_afectacion}%</span> de la sede, según
+          quien llenó el diagnóstico.
+        </p>
       )}
     </div>
   );

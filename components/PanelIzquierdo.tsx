@@ -16,6 +16,7 @@
 
 import { useRef, useState } from "react";
 
+import { TarjetaMapaBase } from "@/components/ControlDerecho";
 import { MarcaGitHub } from "@/components/Iconos";
 import { COLOR_BANDA, COLOR_FUENTE, svgEpicentro } from "@/components/Mapa";
 import type { Capas } from "@/components/Mapa";
@@ -28,17 +29,20 @@ import {
   NOMBRE_ZONA,
   TONO_IVID,
   FUENTES_DEL_VISOR,
+  danoMarcado,
   horaLocal,
   miles,
 } from "@/lib/datos";
 import type { Resumen } from "@/lib/datos";
 import {
   BANDAS,
+  FILTROS_INICIALES,
   EXPLICACION_MMI,
   FUENTE_MMI,
   GRAVEDAD,
   NOMBRE_EMISOR,
   NOMBRE_ESTADO,
+  EMISOR_CORTO,
   NOMBRE_FUENTE,
   NOMBRE_SUBTIPO,
   PRECEDENCIA_FUENTE,
@@ -52,7 +56,9 @@ import type {
   Evento,
   Filtros,
   FuenteDano,
+  MapaBase,
   MetaMen,
+  RasgoSede,
   Reporte,
   Tema,
 } from "@/lib/tipos";
@@ -71,6 +77,12 @@ type Props = {
   /** Los valores de `zona` presentes en los datos, para pintar los botones. */
   zonas: string[];
   reportes: Reporte[];
+  /** Las sedes que la selección deja pasar, o sea exactamente las que el mapa
+   *  está dibujando. Las usa el buscador por nombre. */
+  sedes: RasgoSede[];
+  /** Sedes con daño afirmado cuyo subtipo está apagado. Siguen en `sedes`
+   *  para no rehacer las 26 mil en cada clic; el buscador las salta. */
+  ocultas: Set<string>;
   /** Todos los daños con coordenada, dependan o no de la selección de sedes.
    *  Los arma `danosVisibles`. */
   danos: Dano[];
@@ -89,6 +101,8 @@ type Props = {
   onExportar: () => void;
   /** Cuántas sedes del país entero encuestó el FFIE. */
   encuestadasPais: number;
+  mapaBase: MapaBase;
+  onMapaBase: (m: MapaBase) => void;
 };
 
 export default function PanelIzquierdo(p: Props) {
@@ -144,9 +158,36 @@ export default function PanelIzquierdo(p: Props) {
       </button>
 
       <div className="pointer-events-auto flex flex-col gap-2">
+        {/* El titulo del visor va siempre arriba: es la tarjeta que dice que es
+            esta pantalla y de que evento habla, y debajo de un filtro se leeria
+            como un apartado del filtro.
+
+            La de visualizacion sube al segundo puesto el 21 de agosto de 2026.
+            Estaba tercera, debajo de los daños, y eso invertia el orden en que
+            se usa la pantalla: lo primero que hace quien llega es decidir que
+            territorio esta mirando, y para eso tenia que pasar de largo la
+            tarjeta mas alta de las cuatro.
+
+            Los daños se fueron a la franja derecha el mismo dia, a probar. Esta
+            columna contesta "que estoy mirando" y la de la derecha "que salio",
+            y los reportes son lo segundo: cuelgan del conteo de sedes, no de
+            los filtros. La dibuja `app/page.tsx`.
+
+            En el telefono no: alli la franja derecha es una barra arriba, y con
+            los daños dentro el mapa se quedaba en una tira de dos centimetros
+            entre esa barra y la hoja de abajo. Asi que en pantalla angosta la
+            tarjeta se queda en su sitio de siempre. Son dos instancias y cada
+            una lleva su propio estado de desplegada, pero solo una se dibuja a
+            la vez, y no hay ninguna decision del usuario que valga la pena
+            arrastrar de un ancho de pantalla al otro. */}
         <TarjetaEvento {...p} />
-        <TarjetaDanos {...p} />
         <TarjetaCapas {...p} />
+        <div className="md:hidden">
+          <TarjetaDanos {...p} />
+          <div className="mt-2">
+            <TarjetaMapaBase mapaBase={p.mapaBase} onMapaBase={p.onMapaBase} />
+          </div>
+        </div>
         <TarjetaCaracteristicas {...p} />
       </div>
     </div>
@@ -157,6 +198,11 @@ export default function PanelIzquierdo(p: Props) {
  *  la lista se desplaza por dentro: son tres fuentes en la misma tarjeta y una
  *  con doce sedes empujaría las otras dos fuera de la pantalla. */
 const MAX_FILAS_VISIBLES = 4;
+
+/** Cuántos resultados del buscador se listan. Pasado ese número el problema no
+ *  es la lista sino la búsqueda: quien escribe "escuela" y recibe mil filas
+ *  tiene que escribir algo más, no desplazarse mil veces. */
+const MAX_HALLADAS = 30;
 
 // ------------------------------------------------------------- 1. evento --
 
@@ -241,7 +287,80 @@ function TarjetaEvento({ evento }: Props) {
 
 // ------------------------------------------------------------- 2. daños --
 
-function TarjetaDanos({
+/** Los emisores de la fuente oficial, en el orden en que mandan.
+ *
+ * La Secretaria del Valle primero porque es la que responde por sus escuelas y
+ * desplaza al MEN cuando las dos hablan de la misma sede. Ver
+ * PRECEDENCIA_EMISOR en lib/tipos.ts.
+ *
+ * HOT no esta aqui: es su propia fuente, con su propio color y su propio
+ * bloque. Y las noticias tampoco tienen emisor, porque una nota de prensa no es
+ * una entidad que reporte sino alguien citando a una autoridad.
+ */
+const OFICIALES: EmisorDano[] = ["SE_VALLE", "MEN", "BID"];
+
+/** A partir de que porcentaje declarado se considera que la afectacion es
+ *  grave, para el resumen de la secretaria.
+ *
+ *  Es una decision nuestra y no un umbral normativo, asi que va escrita en
+ *  pantalla al lado del numero. De las 520 sedes del Valle que estimaron un
+ *  porcentaje, 171 lo declaran en 60 o mas. */
+const UMBRAL_AFECTACION = 60;
+
+/** Las filas del desglose de cada estado, que no son una por subtipo.
+ *
+ * "sin definir el impacto" y "sin especificar" se fusionan en una sola fila el
+ * 21 de agosto de 2026. En el archivo son dos cosas distintas y siguen
+ * siéndolo: `dano_sin_definir` es una categoría que el MEN escribe así, y
+ * `dano_sd` son los reportes de prensa y del PTIES que afirman daño sin
+ * precisar. Pero en pantalla las dos contestan lo mismo, que es lo único que
+ * importa a quien está decidiendo a dónde ir: hay daño y nadie ha dicho de qué
+ * tamaño. Dos filas para eso, una debajo de la otra y con nombres que hay que
+ * leer dos veces para distinguir, pedían una decisión que no cambia nada.
+ *
+ * La distinción no se pierde. El subtipo sigue entero en el archivo, la ficha de
+ * cada sede dice la frase textual de su fuente, y `nombreFino` sigue tratando
+ * los `_sd` aparte. Lo que se fusiona es la casilla, y encender o apagar esta
+ * fila enciende o apaga los dos subtipos a la vez.
+ *
+ * El de colapso se renombra a "sin definir" por lo mismo: era la única fila que
+ * seguía llamándose "sin especificar", y con la de daño ya fusionada las dos
+ * ideas iguales tenían dos nombres distintos.
+ */
+const FILAS_SUBTIPO: Record<string, { nombre: string; subtipos: string[] }[]> = {
+  colapso: [
+    { nombre: NOMBRE_SUBTIPO.colapso_total, subtipos: ["colapso_total"] },
+    { nombre: NOMBRE_SUBTIPO.colapso_parcial, subtipos: ["colapso_parcial"] },
+    { nombre: "sin definir", subtipos: ["colapso_sd"] },
+  ],
+  dano: [
+    { nombre: NOMBRE_SUBTIPO.dano_riesgo, subtipos: ["dano_riesgo"] },
+    { nombre: NOMBRE_SUBTIPO.dano_parcial, subtipos: ["dano_parcial"] },
+    { nombre: NOMBRE_SUBTIPO.dano_menor, subtipos: ["dano_menor"] },
+    { nombre: "sin definir", subtipos: ["dano_sin_definir", "dano_sd"] },
+  ],
+};
+
+/** Lo que esta tarjeta necesita del estado, y nada mas.
+ *
+ * Se nombra aparte porque desde el 21 de agosto de 2026 la tarjeta ya no vive
+ * dentro de esta columna: la dibuja `app/page.tsx` en la franja derecha. Pedir
+ * el `Props` entero obligaria a esa pagina a pasarle catorce campos que no usa.
+ */
+export type PropsDanos = Pick<
+  Props,
+  | "capas"
+  | "onCapas"
+  | "filtros"
+  | "reportes"
+  | "danos"
+  | "danosFuera"
+  | "metaMen"
+  | "edicionMen"
+  | "onIrASede"
+>;
+
+export function TarjetaDanos({
   capas,
   onCapas,
   filtros,
@@ -251,15 +370,16 @@ function TarjetaDanos({
   metaMen,
   edicionMen,
   onIrASede,
-}: Props) {
+}: PropsDanos) {
   // Recogida al abrir: la primera pantalla tiene que dejar ver el mapa, y quien
   // llega buscando los reportes los despliega de un clic.
   const [abierta, setAbierta] = useState(false);
-  // El desglose de colapso abre plegado. La distinción entre parcial y total
-  // importa para decidir a dónde ir primero, pero son 120 sedes contra mil de
-  // daño: desplegada por defecto, el filtro más fino de la pantalla ocuparía
-  // el mismo espacio que el más grueso y la tarjeta se leería densa.
-  const [desglosado, setDesglosado] = useState<EstadoDano | null>(null);
+  // Abre con el desglose de "Con daño". Es la casilla mas poblada de la
+  // pantalla, mil y pico sedes, y sin abrirla el numero grande no dice si son
+  // grietas o muros partidos. El de colapso queda plegado: son 196 sedes y su
+  // desglose importa para decidir a donde ir primero, pero con los dos abiertos
+  // la tarjeta arranca con ocho pastillas finas debajo de cuatro gruesas.
+  const [desglosado, setDesglosado] = useState<EstadoDano | null>("dano");
   // "si" sin tilde es el valor que guarda el CSV de curaduria: es un codigo,
   // no prosa, y cambiarlo romperia las filas ya revisadas.
   const pendientes = reportes.filter((r) => !r.es_escuela.trim());
@@ -337,10 +457,34 @@ function TarjetaDanos({
     };
   };
 
+  // Cuantas sedes reportan mas de un emisor oficial. Se cuenta el exceso y no
+  // las sedes repetidas: una sede que reportan los tres se cuenta una vez en el
+  // encabezado y tres en el desglose, asi que sobra dos, no una.
   const sedesEnAmbosOficiales = (() => {
-    const men = new Set(porEmisor("MEN").map((d) => d.dane));
-    return porEmisor("BID").filter((d) => men.has(d.dane)).length;
+    const cuantos = new Map<string, number>();
+    for (const e of OFICIALES) {
+      for (const d of porEmisor(e)) {
+        cuantos.set(d.dane, (cuantos.get(d.dane) ?? 0) + 1);
+      }
+    }
+    return [...cuantos.values()].reduce((a, n) => a + n - 1, 0);
   })();
+
+  /** Prender o apagar un emisor de la fuente oficial.
+   *
+   * No se puede apagar el ultimo. Sin ninguno encendido, la fuente oficial
+   * quedaria con su numero en el encabezado y sin un solo punto en el mapa, y
+   * eso se lee como un error del visor y no como un filtro. Para no ver
+   * reportes oficiales esta la casilla de la capa de reportes, que ya existe.
+   */
+  const alternaEmisor = (clave: string) => {
+    const prendido = capas.emisores.includes(clave);
+    const resto = capas.emisores.filter((x) => x !== clave);
+    if (prendido && !OFICIALES.some((e) => e !== clave && resto.includes(e))) {
+      return;
+    }
+    onCapas({ ...capas, emisores: prendido ? resto : [...resto, clave] });
+  };
 
   // En cuanto se pasan los bloques de fuente respecto de las sedes distintas.
   //
@@ -364,6 +508,12 @@ function TarjetaDanos({
   const sedesDe = (ds: Dano[]) => ds.length;
   const matriculaDe = (ds: Dano[]) => ds.reduce((a, d) => a + d.matricula, 0);
   const marcado = (e: EstadoDano) => capas.estadosDano.includes(e);
+  // Si el reporte se esta dibujando, que es estado marcado y subtipo encendido.
+  // Va aparte de `marcado` porque las dos preguntas no son la misma: la casilla
+  // de "con daño" puede estar marcada con solo uno de sus cuatro desgloses
+  // encendido, y entonces el estado pasa pero el reporte no se dibuja.
+  const dibujado = (d: Dano) =>
+    danoMarcado(d, capas.estadosDano, capas.subtipos);
   const alternar = (es: EstadoDano[]) => {
     const prendido = es.every(marcado);
     const resto = capas.estadosDano.filter((x) => !es.includes(x));
@@ -388,7 +538,12 @@ function TarjetaDanos({
   // las pinta el MEN como sin daño y ademas tienen una noticia que afirma daño:
   // contando por reporte suelto entraban al total, y el mapa dibujaba dos puntos
   // menos que los que decia el encabezado.
-  const sedesConReporte = peores.filter((d) => marcado(d.estado)).length;
+  //
+  // Mira tambien el desglose, no solo el estado. Con "con daño" marcada y de sus
+  // cuatro desgloses solo "riesgo inminente", el mapa dibuja 184 puntos y el
+  // encabezado decia 1.595.
+  const marcadas = peores.filter(dibujado);
+  const sedesConReporte = marcadas.length;
   // Sin recortar, que es contra lo que se mide cuanto se esta dejando fuera.
   const peoresTodos = peorPorSede(danos);
   // El numero de cada casilla cuenta lo que hay dentro del recorte, marcada o
@@ -403,25 +558,45 @@ function TarjetaDanos({
   // las sedes reportadas, que es donde se puede hacer algo al respecto.
   const nColapso = peores.filter((d) => d.estado === "colapso").length;
   // Los subtipos se cuentan sobre `peores`, igual que la casilla que los
-  // agrupa, para que el desglose sume exactamente lo que dice su casilla.
-  const nPorSubtipo = (t: string) =>
-    peores.filter((d) => (d.subtipo ?? "") === t).length;
+  // agrupa, para que el desglose sume exactamente lo que dice su casilla. Recibe
+  // la lista y no un subtipo suelto porque "sin definir" agrupa dos.
+  const nPorSubtipo = (ts: string[]) =>
+    peores.filter((d) => ts.includes(d.subtipo ?? "")).length;
   const subtipoMarcado = (t: string) => capas.subtipos.includes(t);
-  const alternaSubtipo = (estado: EstadoDano, t: string) => {
-    const prendido = subtipoMarcado(t);
-    const resto = capas.subtipos.filter((x) => x !== t);
+  /** Prender o apagar una fila del desglose, que puede llevar más de un subtipo.
+   *
+   * Los de una misma fila se mueven juntos: con uno encendido y otro apagado la
+   * casilla no podría decir la verdad ni marcada ni sin marcar.
+   */
+  const alternaSubtipo = (estado: EstadoDano, ts: string[]) => {
+    const prendido = ts.every(subtipoMarcado);
+    const resto = capas.subtipos.filter((x) => !ts.includes(x));
     // No se puede apagar el último de un estado: sin ningún subtipo encendido su
     // casilla quedaría marcada y sin pintar nada, que se lee como un error del
     // mapa y no como un filtro. Apagar el estado entero es lo que hace la
     // casilla de arriba, y ya existe.
     const hermanos = SUBTIPOS_POR_ESTADO[estado] ?? [];
-    if (prendido && !hermanos.some((h) => h !== t && resto.includes(h))) return;
-    onCapas({ ...capas, subtipos: prendido ? resto : [...resto, t] });
+    if (prendido
+      && !hermanos.some((h) => !ts.includes(h) && resto.includes(h))) return;
+    onCapas({ ...capas, subtipos: prendido ? resto : [...resto, ...ts] });
   };
   const nDano = peores.filter((d) => d.estado === "dano").length;
+  // Lo que se está dibujando de cada estado, no el total. La casilla apagada
+  // sigue diciendo el total, que es cuántas aparecerían al prenderla. La
+  // prendida tiene que decir las que de verdad están en el mapa: si "Con daño"
+  // queda en 1.595 con solo "riesgo inminente" marcado, se lee como si el
+  // recorte no existiera.
+  const nColapsoVisible = peores.filter(
+    (d) => d.estado === "colapso" && dibujado(d)).length;
+  const nDanoVisible = peores.filter(
+    (d) => d.estado === "dano" && dibujado(d)).length;
   const nSinDano = peores.filter((d) => d.estado === "sin_dano").length;
   const nSinVerificar = peores.filter(
     (d) => d.estado === "sin_verificar").length;
+
+  // Aqui se calculaba el agregado de la verificacion tecnica, que se fue con su
+  // recuadro. Lo que quedaba de la operacion del Valle vive ahora colgado de la
+  // secretaria, en la tarjeta de capas, que es donde la pregunta tiene sujeto.
 
   // Inspeccionadas no es una casilla: es la suma de las que afirman daño mas
   // las que afirman que no lo hay. El denominador solo aparece cuando quien
@@ -445,50 +620,98 @@ function TarjetaDanos({
   // sedes que caen fuera de la grilla del ShakeMap del USGS, donde no hay
   // intensidad estimada de ningun valor.
   const fueraDeBanda = peoresTodos.filter(
-    (d) => marcado(d.estado)
+    (d) => dibujado(d)
       && (d.banda == null || !filtros.bandas.includes(d.banda)),
   ).length;
   const todasLasBandas = capas.danosTodasLasBandas;
 
+  /** Las cuatro casillas, en orden de gravedad, que es el orden en que hay que
+   *  ir a mirar. Colapso y daño son las dos que el MEN precisa, y por eso son
+   *  las dos que abren un desglose. */
+  const casillas: {
+    estado: EstadoDano;
+    nombre: string;
+    n: number;
+    nota: string;
+    conDesglose?: boolean;
+  }[] = [
+    {
+      estado: "colapso",
+      nombre: "Colapso",
+      n: marcado("colapso") ? nColapsoVisible : nColapso,
+      nota: "la fuente afirma que la edificación se vino abajo, entera o en parte",
+      conDesglose: true,
+    },
+    {
+      estado: "dano",
+      nombre: "Con daño",
+      n: marcado("dano") ? nDanoVisible : nDano,
+      nota: "daño declarado por alguna de las fuentes, sin llegar a colapso",
+      conDesglose: true,
+    },
+    {
+      estado: "sin_dano",
+      nombre: "Sin daño",
+      n: nSinDano,
+      nota: "alguien fue a mirar y no encontró afectación. No es lo mismo que no tener reporte.",
+    },
+    {
+      estado: "sin_verificar",
+      nombre: "Sin verificar",
+      n: nSinVerificar,
+      nota: "hay una foto emparejada con la sede, pero nadie ha evaluado el edificio",
+    },
+  ];
+
   return (
     <Tarjeta>
-      <div className="flex items-center gap-2 px-4 py-2.5">
-        <button
-          onClick={() => setAbierta(!abierta)}
-          className="flex flex-1 items-center gap-2 text-left text-sm font-medium"
-        >
-          {/* Tres puntos y no uno: el encabezado ya dice que aqui hay tres
-              emisores distintos, antes de desplegar nada. */}
-          <span className="flex shrink-0 gap-0.5">
-            {(["hot", "oficial", "noticia"] as FuenteDano[]).map((f) => (
-              <span
-                key={f}
-                className="inline-block h-2.5 w-2.5 rounded-full"
-                style={{ background: COLOR_FUENTE[f] }}
-              />
-            ))}
-          </span>
-          <span>Daños Reportados en Sedes Educativas (SE)</span>
-          <span className="num text-xs" style={{ color: "var(--tinta-3)" }}>
-            ({miles(sedesConReporte)})
-          </span>
-        </button>
+      {/* El encabezado en dos filas. Arriba los tres puntos de fuente y los dos
+          interruptores; abajo el titulo con su cifra, con los 208 px enteros
+          para el.
+
+          En una sola fila los puntos y los dos botones se comian 66 px de los
+          208, y lo que quedaba partia "Daños reportados en SE" en tres lineas
+          con el numero flotando al lado de la segunda. Los puntos no son
+          adorno: dicen que aqui hay tres fuentes distintas antes de desplegar
+          nada, y por eso no se van, se suben. */}
+      <div className="flex items-center gap-2 px-4 pt-2.5">
+        <span className="flex flex-1 gap-1">
+          {(["hot", "oficial", "noticia"] as FuenteDano[]).map((f) => (
+            <span
+              key={f}
+              className="inline-block h-2.5 w-2.5 rounded-full"
+              style={{ background: COLOR_FUENTE[f] }}
+              title={NOMBRE_FUENTE[f]}
+            />
+          ))}
+        </span>
         <button
           onClick={() => onCapas({ ...capas, reportes: !capas.reportes })}
           aria-label={capas.reportes ? "ocultar en el mapa" : "mostrar en el mapa"}
           title={capas.reportes ? "ocultar en el mapa" : "mostrar en el mapa"}
+          className="text-xs leading-none"
           style={{ color: "var(--tinta-3)" }}
         >
           {capas.reportes ? "◉" : "○"}
         </button>
         <button
           onClick={() => setAbierta(!abierta)}
+          className="text-xs leading-none"
           style={{ color: "var(--tinta-3)" }}
           aria-label={abierta ? "plegar" : "desplegar"}
         >
           {abierta ? "▾" : "▸"}
         </button>
       </div>
+      <button
+        onClick={() => setAbierta(!abierta)}
+        className="flex w-full items-baseline gap-1.5 px-4 pt-0.5 pb-2 text-left text-sm font-medium"
+      >
+        <span>Daños reportados en SE</span>
+        <span className="num text-xs" style={{ color: "var(--tinta-3)" }}>
+          ({miles(sedesConReporte)})
+        </span>
+      </button>
 
       {/* Las cuatro casillas van fuera del plegado: son el filtro de la capa y
           tienen que poder tocarse sin desplegar la tarjeta entera.
@@ -498,40 +721,53 @@ function TarjetaDanos({
           busca los edificios caidos y no quiere leerlos mezclados con las 112
           filas que hablan de grietas. Van en orden de gravedad, que es el
           orden en que hay que ir a mirar. */}
-      <div className="flex flex-wrap items-center gap-1.5 px-4 pb-2">
-        <Casilla
-          activa={marcado("colapso")}
-          onAlternar={() => alternar(["colapso"])}
-          nombre="Colapso"
-          n={nColapso}
-          nota="la fuente afirma que la edificación se vino abajo, entera o en parte"
-          onDesglose={() =>
-            setDesglosado(desglosado === "colapso" ? null : "colapso")}
-          desglosado={desglosado === "colapso"}
-        />
-        <Casilla
-          activa={marcado("dano")}
-          onAlternar={() => alternar(["dano"])}
-          nombre="Con daño"
-          n={nDano}
-          nota="daño declarado por alguna de las fuentes, sin llegar a colapso"
-          onDesglose={() => setDesglosado(desglosado === "dano" ? null : "dano")}
-          desglosado={desglosado === "dano"}
-        />
-        <Casilla
-          activa={marcado("sin_dano")}
-          onAlternar={() => alternar(["sin_dano"])}
-          nombre="Sin daño"
-          n={nSinDano}
-          nota="alguien fue a mirar y no encontró afectación. No es lo mismo que no tener reporte."
-        />
-        <Casilla
-          activa={marcado("sin_verificar")}
-          onAlternar={() => alternar(["sin_verificar"])}
-          nombre="Sin verificar"
-          n={nSinVerificar}
-          nota="hay una foto emparejada con la sede, pero nadie ha evaluado el edificio"
-        />
+      {/* En columna desde el 21 de agosto de 2026, y con el desglose de cada
+          una colgando de su propia casilla. En fila envolvente caian dos y dos,
+          y con la tarjeta a 240 px la fila se rompia por donde tocara: "Sin
+          daño" podia quedar arriba al lado de "Colapso" y "Con daño" debajo,
+          que es leer la escala de gravedad en zigzag. Y el desglose se dibujaba
+          al final de las cuatro, asi que no se sabia de cual de las dos
+          colgaban las casillas finas. */}
+      <div className="flex flex-col gap-1 px-4 pb-2">
+        {casillas.map((c) => (
+          <div key={c.estado} className="flex flex-col gap-1">
+            <Casilla
+              activa={marcado(c.estado)}
+              onAlternar={() => alternar([c.estado])}
+              nombre={c.nombre}
+              n={c.n}
+              nota={c.nota}
+              onDesglose={c.conDesglose
+                ? () =>
+                  setDesglosado(desglosado === c.estado ? null : c.estado)
+                : undefined}
+              desglosado={desglosado === c.estado}
+            />
+            {/* "Sin definir" no es un descarte ni una categoría floja: son los
+                reportes de prensa y del PTIES que afirman colapso o daño sin
+                precisar más, y los que el MEN dejó con el impacto sin definir.
+                Sin esa fila, abrir el desglose habría borrado del mapa esos
+                casos sin que nadie lo pidiera. */}
+            {desglosado === c.estado && (
+              <div className="flex flex-col gap-1 pb-1 pl-4">
+                {(FILAS_SUBTIPO[c.estado] ?? []).map((f) => (
+                  <Casilla
+                    key={f.subtipos.join("+")}
+                    activa={marcado(c.estado) && f.subtipos.every(subtipoMarcado)}
+                    onAlternar={() => alternaSubtipo(c.estado, f.subtipos)}
+                    nombre={f.nombre}
+                    n={nPorSubtipo(f.subtipos)}
+                    nota={f.subtipos.length > 1
+                      ? "el MEN la deja con el impacto sin definir, o la fuente afirma el daño sin precisar más"
+                      : f.subtipos[0].endsWith("_sd")
+                        ? "la fuente lo afirma sin precisar más. Solo el MEN clasifica el impacto."
+                        : `el MEN clasifica la sede como ${f.nombre}`}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
         {inspeccionadas && (
           <span className="num text-[11px]" style={{ color: "var(--tinta-3)" }}>
             {inspeccionadas}
@@ -539,36 +775,24 @@ function TarjetaDanos({
         )}
       </div>
 
+      {/* Aqui vivio la caja de verificacion tecnica y se fue el 21 de agosto de
+          2026, leyendo las fichas.
+
+          Contaba 16 sedes con concepto tecnico disponible y 514 sin el, y las
+          dos cifras eran ciertas, pero la caja afirmaba mas de lo que el dato
+          aguanta. La casilla del formulario pregunta si el concepto esta
+          disponible, no si alguien reviso la sede despues del sismo: puede ser
+          de antes, y de hecho 12 de esas 16 sedes declaran en la casilla de al
+          lado que todavia requieren visita tecnica. Un recuadro titulado
+          "verificacion tecnica" se lee como "estas ya estan revisadas", y eso no
+          es lo que dice el archivo.
+
+          El campo no se borro. Sigue en `danos.json` y sigue en la ficha de cada
+          sede, que es donde se lee junto a la casilla de visita pendiente y no
+          se puede confundir con un balance del departamento. Lo que se quito es
+          el agregado, porque agregar es justo lo que este dato no permite. */}
+
       <AvisoMen edicion={edicionMen} />
-
-      {/* El desglose de la casilla abierta. Sangrado y en tono apagado: es un
-          filtro dentro de otro, y tiene que leerse como una rama de la casilla
-          de arriba y no como una casilla más al mismo nivel.
-
-          Solo uno a la vez. Con los dos desplegados son ocho pastillas en dos
-          filas debajo de cuatro, y la tarjeta deja de leerse: quien abre el
-          desglose de daño está mirando el daño, no las dos cosas.
-
-          "Sin especificar" no es un descarte ni una categoría floja: son los
-          reportes de prensa y del PTIES, que afirman colapso o daño y no
-          precisan más. Solo el MEN precisa. Sin esa pastilla, abrir el desglose
-          habría borrado del mapa esos casos sin que nadie lo pidiera. */}
-      {desglosado && (
-        <div className="flex flex-wrap items-center gap-1.5 px-4 pb-2 pl-8">
-          {(SUBTIPOS_POR_ESTADO[desglosado] ?? []).map((t) => (
-            <Casilla
-              key={t}
-              activa={marcado(desglosado) && subtipoMarcado(t)}
-              onAlternar={() => alternaSubtipo(desglosado, t)}
-              nombre={NOMBRE_SUBTIPO[t]}
-              n={nPorSubtipo(t)}
-              nota={t.endsWith("_sd")
-                ? "la fuente lo afirma sin precisar más. Solo el MEN hace esta distinción."
-                : `el MEN clasifica la sede como ${NOMBRE_SUBTIPO[t]}`}
-            />
-          ))}
-        </div>
-      )}
 
       {/* La opcion de soltar el recorte de intensidad, pegada al numero que la
           justifica. Va aqui y no en la tarjeta de capas porque es una decision
@@ -680,17 +904,19 @@ function TarjetaDanos({
             sedes={sedesDe(porFuente("oficial"))}
             matricula={matriculaDe(porFuente("oficial"))}
             onIrASede={onIrASede}
-            desglose={(["MEN", "BID"] as EmisorDano[]).map((e) => ({
+            desglose={OFICIALES.map((e) => ({
               clave: e,
-              nombre: NOMBRE_EMISOR[e] ?? e,
+              nombre: EMISOR_CORTO[e] ?? e,
               sedes: sedesDe(porEmisor(e)),
               matricula: matriculaDe(porEmisor(e)),
             }))}
+            emisoresActivos={capas.emisores}
+            onAlternarEmisor={alternaEmisor}
             // Sin esto los dos emisores suman más que el total de la tarjeta y
             // no hay dónde leer por qué. Son las sedes que reportan los dos, y
             // en la tarjeta se cuentan una sola vez.
             solape={sedesEnAmbosOficiales}
-            nota="Dos emisores. El MEN publica una capa con el estado físico sede por sede y el código DANE ya puesto; ese estado sale de una encuesta a rectores que no es exhaustiva, así que una sede sin reporte no es una sede sin daño. El BID aporta el reporte del equipo PTIES con corte al 10 de agosto, que nombra instituciones y cuyas sedes se resolvieron una por una."
+            nota="Tres emisores, y se pueden apagar uno a uno. La Secretaría del Valle consolidó lo que declararon sus rectores con corte al 16 de agosto, y manda sobre el MEN cuando las dos hablan de la misma sede: es la entidad que responde por esas escuelas. Su archivo no trae código DANE, así que el emparejamiento con el directorio lo hicimos nosotros y cada sede dice en su ficha con qué regla. El MEN publica una capa con el estado físico sede por sede y el código ya puesto; ese estado sale de una encuesta a rectores que no es exhaustiva, así que una sede sin reporte no es una sede sin daño. El BID aporta el reporte del equipo PTIES con corte al 10 de agosto."
             pie={<PieMen meta={metaMen} edicion={edicionMen} />}
             vacio="Todavía no hay ningún reporte oficial cargado."
           />
@@ -746,6 +972,8 @@ function BloqueFuente({
   solape,
   aporte,
   pie,
+  emisoresActivos,
+  onAlternarEmisor,
   onIrASede,
 }: {
   fuente: FuenteDano;
@@ -770,6 +998,12 @@ function BloqueFuente({
   /** Lo que se dice al final, después de la lista. Hoy solo lo usa la fuente
    *  oficial, para fechar la capa del MEN. */
   pie?: React.ReactNode;
+  /** Que emisores estan encendidos, y como apagarlos. Cuando vienen, las lineas
+   *  del desglose dejan de ser cifras y pasan a ser el filtro: es donde ya esta
+   *  escrito cuanto aporta cada uno, y separar el numero de su interruptor
+   *  obligaria a buscar en otra tarjeta lo que aqui se acaba de leer. */
+  emisoresActivos?: string[];
+  onAlternarEmisor?: (clave: string) => void;
   onIrASede: (dane: string) => void;
 }) {
   const [abierto, setAbierto] = useState(false);
@@ -820,25 +1054,57 @@ function BloqueFuente({
           número, no un detalle que haya que ir a buscar. */}
       {desglose && desglose.some((x) => x.sedes > 0) && (
         <div className="mb-2 ml-4.5 flex flex-col gap-0.5">
-          {desglose.filter((x) => x.sedes > 0).map((x) => (
-            <span
-              key={x.clave}
-              className="num text-[11px]"
-              style={{ color: "var(--tinta-3)" }}
-            >
-              <span className="font-medium">{x.clave}</span>{" "}
-              {miles(x.sedes)} {x.sedes === 1 ? "sede" : "sedes"}
-              {" · "}
-              {miles(x.matricula)}{" "}
-              {x.matricula === 1 ? "estudiante" : "estudiantes"}
-            </span>
-          ))}
+          {desglose.filter((x) => x.sedes > 0).map((x) => {
+            const activo = !emisoresActivos || emisoresActivos.includes(x.clave);
+            const cifra = (
+              <>
+                <span className="font-medium">{x.nombre}</span>{" "}
+                {miles(x.sedes)} {x.sedes === 1 ? "sede" : "sedes"}
+                {" · "}
+                {miles(x.matricula)}{" "}
+                {x.matricula === 1 ? "estudiante" : "estudiantes"}
+              </>
+            );
+            if (!onAlternarEmisor) {
+              return (
+                <span key={x.clave} className="num text-[11px]"
+                      style={{ color: "var(--tinta-3)" }}>
+                  {cifra}
+                </span>
+              );
+            }
+            return (
+              <button
+                key={x.clave}
+                onClick={() => onAlternarEmisor(x.clave)}
+                aria-pressed={activo}
+                title={activo
+                  ? `Dejar de dibujar lo que reporta ${x.nombre}`
+                  : `Volver a dibujar lo que reporta ${x.nombre}`}
+                className="num flex items-center gap-1.5 text-left text-[11px]"
+                style={{ color: activo ? "var(--tinta-2)" : "var(--tinta-3)",
+                         opacity: activo ? 1 : 0.6 }}
+              >
+                <span
+                  className="flex h-3 w-3 shrink-0 items-center justify-center rounded-sm border text-[8px] leading-none"
+                  style={{
+                    borderColor: activo ? "var(--acento)" : "var(--linea)",
+                    background: activo ? "var(--acento)" : "transparent",
+                    color: "var(--superficie)",
+                  }}
+                >
+                  {activo ? "✓" : ""}
+                </span>
+                <span>{cifra}</span>
+              </button>
+            );
+          })}
           {solape != null && solape > 0 && (
             <span className="text-[11px]" style={{ color: "var(--tinta-3)" }}>
               <span className="num">{miles(solape)}</span>{" "}
               {solape === 1
-                ? "sede la reportan los dos, y arriba cuenta una vez"
-                : "sedes las reportan los dos, y arriba cuentan una vez"}
+                ? "sede la reporta mas de uno, y arriba cuenta una vez"
+                : "sedes las reporta mas de uno, y arriba cuentan una vez"}
             </span>
           )}
         </div>
@@ -1036,8 +1302,37 @@ function FilaDano({
   );
 }
 
-/** La etiqueta del estado. Va del color de la fuente para no abrir un cuarto
- *  canal de color, y el "sin daño" va hueco porque no es una alerta. */
+/** Una linea del resumen de la secretaria: la cifra, sobre cuantas, y que
+ *  significa.
+ *
+ * El denominador se repite en cada linea a proposito. Las dos preguntas no
+ * tienen el mismo numero de respuestas, porque no las contestaron las mismas
+ * sedes, y una sola nota al pie no lo diria.
+ *
+ * Antes habia una variante en verde, para la cifra de las sedes con concepto
+ * tecnico. Se fue con ese recuadro: las dos lineas que quedan son las dos malas,
+ * y un color condicional que nunca se usa es una rama que hay que mantener sin
+ * que nadie la vea.
+ */
+function Operativa({ n, total, texto }: {
+  n: number;
+  total: number;
+  texto: string;
+}) {
+  if (!total) return null;
+  return (
+    <div className="flex items-baseline gap-1.5">
+      <span className="num font-semibold" style={{ color: "var(--critico)" }}>
+        {miles(n)}
+      </span>
+      <span className="flex-1">{texto}</span>
+      <span className="num text-[10px]" style={{ color: "var(--tinta-3)" }}>
+        {total ? Math.round((n / total) * 100) : 0}%
+      </span>
+    </div>
+  );
+}
+
 function Insignia({ estado, color }: { estado: EstadoDano; color: string }) {
   const hueco = estado === "sin_dano" || estado === "sin_verificar";
   return (
@@ -1064,13 +1359,132 @@ function TarjetaCapas({
   resumen,
   secretarias,
   zonas,
+  sedes,
+  ocultas,
+  danos,
+  onIrASede,
 }: Props) {
   const [abierta, setAbierta] = useState(true);
+  // Las tres filas abren desplegadas menos la de sedes. La de secretaria porque
+  // es la primera decision de la pantalla, y la de intensidad porque es la que
+  // explica el color del mapa. La de sedes guarda el buscador y los siete
+  // filtros, y ninguno de los dos se necesita antes de haber elegido territorio.
+  const [secretariaAbierta, setSecretariaAbierta] = useState(true);
+  const [sedesAbierta, setSedesAbierta] = useState(false);
   const [intensidadAbierta, setIntensidadAbierta] = useState(true);
   const [masFiltros, setMasFiltros] = useState(false);
   const set = (p: Partial<Filtros>) => onFiltros({ ...filtros, ...p });
   const alternaLista = (lista: string[], v: string) =>
     lista.includes(v) ? lista.filter((x) => x !== v) : [...lista, v];
+
+  const conSecretaria = filtros.secretarias.length > 0;
+
+  /** Lo que la Secretaría declara sobre la operación de sus escuelas.
+   *
+   * Vive aquí y no en la tarjeta de daños porque no es una pregunta sobre el
+   * edificio sino sobre la entidad: si la escuela está dando clase. Solo
+   * aparece con una secretaría elegida, que es cuando la pregunta tiene un
+   * sujeto, y hoy solo la del Valle la contesta.
+   *
+   * Se cuenta sobre los mismos reportes que la capa de daños está dibujando: el
+   * recorte de intensidad y las casillas de estado, para que este número no
+   * diga una cosa mientras el mapa dibuja otra. `danos` ya llega recortado por
+   * la secretaría elegida, así que aquí no hay que volver a filtrarlo.
+   *
+   * `presta_servicio === false` y nunca por descarte. Hay sedes que dejaron la
+   * casilla en blanco, y contarlas como "no" convertiría una pregunta sin
+   * responder en una respuesta.
+   */
+  const enBandaDibujada = (d: Dano) =>
+    capas.danosTodasLasBandas
+    || (d.banda != null && filtros.bandas.includes(d.banda));
+  const conDanoMarcado = [...reportePorSede(danos.filter(enBandaDibujada))
+    .values()].filter(
+      (d) => danoMarcado(d, capas.estadosDano, capas.subtipos));
+  const declaranOperacion = conDanoMarcado.filter(
+    (d) => d.presta_servicio !== undefined);
+  const nSinClase = declaranOperacion.filter(
+    (d) => d.presta_servicio === false).length;
+
+  /** Las sedes muy afectadas que además piden que las muevan.
+   *
+   * El umbral del 60% no sale de una norma, lo pusimos aquí para separar la
+   * afectación grave del resto, y por eso el número va escrito en pantalla en
+   * vez de esconderse detrás de la palabra "grave".
+   *
+   * El porcentaje lo estimó quien llenó el formulario y no un ingeniero, así que
+   * no es una medida: es la severidad que declara la sede. Cruzarlo con la
+   * casilla de reubicación temporal es lo que lo vuelve útil, porque son dos
+   * respuestas independientes que apuntan a lo mismo, y cuando coinciden ya no
+   * es una impresión de una sola casilla.
+   *
+   * El denominador son las que pasan el umbral y además contestaron si requieren
+   * reubicación. Las que no contestaron ninguna de las dos no entran, ni arriba
+   * ni abajo de la fracción.
+   */
+  const muyAfectadas = conDanoMarcado.filter(
+    (d) => d.pct_afectacion != null && d.pct_afectacion >= UMBRAL_AFECTACION);
+  const decidenReubicacion = muyAfectadas.filter(
+    (d) => d.requiere_reubicacion !== undefined
+      && d.requiere_reubicacion !== null);
+  const nPidenReubicacion = muyAfectadas.filter(
+    (d) => d.requiere_reubicacion === true).length;
+
+  /** Elegir una secretaria cambia a que pregunta responde la pantalla.
+   *
+   * Sin secretaria, la pregunta es del sismo: donde sacudio fuerte y que hay
+   * dentro. Con una secretaria elegida, la pregunta es de esa entidad: cuantas
+   * escuelas tiene, cuales estan reportadas y cuales no. En la segunda pregunta
+   * el recorte de intensidad estorba, porque esconde escuelas que son suyas por
+   * un motivo que no tiene que ver con ella.
+   *
+   * Asi que las bandas se vacian y dejan de recortar. Vaciarlas no esconde nada:
+   * con una secretaria elegida la banda ya no reparte sedes, solo pinta la
+   * mancha, y eso lo decide `pasa` en `lib/datos.ts`. El mapa abre limpio, con
+   * las escuelas de la entidad sobre el mapa base, y las seis casillas en blanco
+   * dicen la verdad: no hay ninguna mancha encima.
+   *
+   * Antes se encendian las seis, que tambien equivalia a no recortar, pero
+   * mentia en pantalla. Las casillas aparecian marcadas y el pais entero
+   * quedaba cubierto de color encima de la linea del territorio; y si se apagaba
+   * la capa para poder ver algo, quedaban marcadas sin pintar nada. En los dos
+   * casos el control decia una cosa y el mapa otra.
+   *
+   * La capa se queda habilitada a proposito. Es lo que hace que marcar una banda
+   * se vea al instante: con la capa apagada, la casilla se marcaba y no pasaba
+   * nada.
+   *
+   * Al quitar la ultima secretaria se vuelve al arranque, 6,0 y 6,5, y no a
+   * ninguna ni a todas: dejar el recorte cambiado convertiria un rodeo por una
+   * secretaria en un cambio permanente del mapa que nadie pidio.
+   */
+  const eligeSecretaria = (v: string) => {
+    const lista = alternaLista(filtros.secretarias, v);
+    const primera = !conSecretaria && lista.length > 0;
+    const ninguna = conSecretaria && lista.length === 0;
+    set({
+      secretarias: lista,
+      ...(primera ? { bandas: [] } : {}),
+      ...(ninguna ? { bandas: FILTROS_INICIALES.bandas } : {}),
+    });
+    if (primera) {
+      onCapas({ ...capas, intensidad: true });
+      setIntensidadAbierta(false);
+      setMasFiltros(true);
+    }
+    if (ninguna) {
+      onCapas({ ...capas, intensidad: true });
+      setIntensidadAbierta(true);
+      setMasFiltros(false);
+    }
+  };
+
+  const limpiaSecretarias = () => {
+    set({ secretarias: [], bandas: FILTROS_INICIALES.bandas });
+    onCapas({ ...capas, intensidad: true });
+    setIntensidadAbierta(true);
+    setMasFiltros(false);
+  };
 
   const alterna = (b: number) =>
     onFiltros({
@@ -1083,12 +1497,184 @@ function TarjetaCapas({
   return (
     <Tarjeta>
       <Encabezado
-        titulo="Capas"
+        titulo="Visualiza Sedes Educativas (SE) por"
         abierta={abierta}
         onAlternar={() => setAbierta(!abierta)}
       />
       {abierta && (
         <div className="pb-2">
+          {/* Las tres filas al mismo nivel desde el 21 de agosto de 2026: mismo
+              tamaño de letra, mismo caret para plegar y mismo ojo para dejar de
+              dibujar. Antes la secretaria era una etiqueta de 10 px sobre un
+              desplegable, la intensidad una fila con caret y las sedes una fila
+              sin caret, y las tres cosas eran el mismo tipo de decision leida de
+              tres formas distintas.
+
+              La secretaria va primera porque no es un filtro sobre las escuelas
+              sino el recorte de jurisdiccion de la pantalla: recorta las sedes,
+              los puntos de dano y las dos cuentas de arriba a la derecha.
+
+              Su ojo apaga solo la linea punteada del territorio. El recorte
+              sigue en pie con la linea apagada; lo que se apaga es el dibujo del
+              limite, que es de geoBoundaries 2020 y a veces estorba encima de la
+              mancha de intensidad. */}
+          <FilaCapa
+            nombre="Secretaría de educación"
+            activa={capas.territorio}
+            onAlternar={() =>
+              onCapas({ ...capas, territorio: !capas.territorio })}
+            plegada={!secretariaAbierta}
+            onPlegar={() => setSecretariaAbierta(!secretariaAbierta)}
+          />
+          {secretariaAbierta && (
+            <div className="px-4 pb-2 pl-8">
+              <Desplegable
+                opciones={secretarias}
+                elegidas={filtros.secretarias}
+                onAlternar={eligeSecretaria}
+                onLimpiar={limpiaSecretarias}
+              />
+
+              {conSecretaria && (
+                <div
+                  className="mt-2 rounded border px-2.5 py-2 text-[11px] leading-relaxed"
+                  style={{
+                    borderColor: "var(--linea)",
+                    color: "var(--tinta-2)",
+                  }}
+                >
+                  {declaranOperacion.length > 0 ? (
+                    <>
+                      {/* El denominador va escrito. Sin el, "462 no estan
+                          prestando servicio" se lee como una cifra del mapa
+                          entero cuando es de las sedes con dano de esta
+                          entidad que ademas contestaron la pregunta. */}
+                      <div className="mb-1" style={{ color: "var(--tinta-3)" }}>
+                        <span className="num">
+                          {miles(declaranOperacion.length)}
+                        </span>{" "}
+                        de las{" "}
+                        <span className="num">
+                          {miles(conDanoMarcado.length)}
+                        </span>{" "}
+                        sedes con daño en pantalla declaran si están dando
+                        clase.
+                      </div>
+                      <Operativa
+                        n={nSinClase}
+                        total={declaranOperacion.length}
+                        texto="no están dando clase presencial"
+                      />
+                      {/* La segunda cifra cruza dos casillas distintas del
+                          formulario, y por eso dice las dos en el rotulo. El
+                          umbral va escrito porque lo pusimos nosotros: no hay
+                          norma que diga que el 60% es la frontera de lo grave.
+
+                          Solo aparece cuando alguna sede de la seleccion pasa
+                          el umbral y contesto la casilla de reubicacion. Sin
+                          esa condicion, en una secretaria sin diagnostico se
+                          leia "0 de 0 piden reubicacion", que suena a que
+                          ninguna la necesita cuando lo que pasa es que nadie
+                          pregunto. */}
+                      {decidenReubicacion.length > 0 && (
+                        <div
+                          className="mt-1.5 border-t pt-1.5"
+                          style={{ borderColor: "var(--linea)" }}
+                        >
+                          <div
+                            className="mb-1"
+                            style={{ color: "var(--tinta-3)" }}
+                          >
+                            <span className="num">
+                              {miles(muyAfectadas.length)}
+                            </span>{" "}
+                            declaran una afectación de{" "}
+                            <span className="num">{UMBRAL_AFECTACION}%</span> o
+                            más de la sede.
+                          </div>
+                          <Operativa
+                            n={nPidenReubicacion}
+                            total={decidenReubicacion.length}
+                            texto="de esas piden reubicación temporal"
+                          />
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <span style={{ color: "var(--tinta-3)" }}>
+                      Esta entidad no declara si sus sedes están dando clase. La
+                      Secretaría del Valle es la única que hasta hoy lo reporta,
+                      con corte al 16 de agosto.
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* El nombre volvio a ser "Sedes educativas" a secas. Estuvo unas
+              horas como "sin daño", que describia bien lo que se ve al apagar la
+              capa, pero decia de menos: la fila no es solo el interruptor de un
+              dibujo, es donde se busca una escuela por nombre y donde viven los
+              siete filtros que deciden cuales se cuentan. */}
+          <FilaCapa
+            nombre="Sedes educativas"
+            activa={capas.sedes}
+            onAlternar={() => onCapas({ ...capas, sedes: !capas.sedes })}
+            muestra={<Gota color="var(--sede-base)" />}
+            plegada={!sedesAbierta}
+            onPlegar={() => setSedesAbierta(!sedesAbierta)}
+          />
+          {sedesAbierta && (
+            <div className="px-4 pt-1 pb-2 pl-8">
+              <BuscadorSede
+                sedes={sedes}
+                ocultas={ocultas}
+                onIrASede={onIrASede}
+                conFiltros={filtros.secretarias.length > 0
+                  || filtros.zonas.length > 0
+                  || filtros.quintiles.length > 0
+                  || filtros.matriculaMin > 0
+                  || filtros.bandas.length < BANDAS.length
+                  || ocultas.size > 0}
+              />
+
+              {/* Los filtros de la sede cuelgan de esta fila. Antes vivian en
+                  una tarjeta aparte y quedaba sin decir que recortan exactamente
+                  esos puntos y ningun otro.
+
+                  Los siete estan detras del mismo clic desde el 21 de agosto de
+                  2026. Antes zona, matricula y quintil quedaban siempre a la
+                  vista porque son los que se usan para acotar a donde ir, pero
+                  con la lista de secretarias arriba y las bandas debajo la
+                  tarjeta abria con tres controles que nadie habia pedido
+                  todavia. Lo primero que se decide es el territorio; los cortes
+                  vienen despues.
+
+                  Se abren solos al elegir una secretaria. Ahi la pregunta deja
+                  de ser del sismo y pasa a ser de la entidad, y estos son los
+                  cortes con los que se reparte el trabajo dentro de su
+                  territorio. */}
+              <button
+                onClick={() => setMasFiltros(!masFiltros)}
+                className="mt-2 text-xs underline"
+                style={{ color: "var(--tinta-2)" }}
+              >
+                {masFiltros ? "Menos filtros" : "Más filtros"}
+              </button>
+              <BloqueFiltros
+                abierto={masFiltros}
+                filtros={filtros}
+                set={set}
+                alternaLista={alternaLista}
+                zonas={zonas}
+                resumen={resumen}
+                capas={capas}
+                onCapas={onCapas}
+              />
+            </div>
+          )}
+
           <FilaCapa
             nombre="Intensidad del sismo"
             ayuda={EXPLICACION_MMI}
@@ -1155,51 +1741,71 @@ function TarjetaCapas({
                   </button>
                 );
               })}
+              {/* Con una secretaría elegida la banda deja de repartir sedes y
+                  solo pinta, así que la frase de siempre dejaría de ser cierta
+                  justo donde más se lee. */}
               <p
                 className="px-4 pt-1 pl-8 text-[10px] leading-relaxed"
                 style={{ color: "var(--tinta-3)" }}
               >
-                El mapa pinta qué tan fuerte se sintió el sismo en cada zona y
-                muestra las sedes educativas que quedaron dentro.
-                Encender una banda decide las dos cosas a la vez: la mancha del
-                mapa y las sedes que se cuentan. La línea punteada marca hasta
-                dónde llega la grilla del USGS, no hasta dónde llegó el temblor.
+                {conSecretaria ? (
+                  <>
+                    El mapa pinta qué tan fuerte se sintió el sismo en cada zona.
+                    Con una secretaría elegida, encender una banda solo dibuja la
+                    mancha encima: no hace aparecer ni desaparecer sedes, porque
+                    las de la entidad se muestran todas.
+                  </>
+                ) : (
+                  <>
+                    El mapa pinta qué tan fuerte se sintió el sismo en cada zona y
+                    muestra las sedes educativas que quedaron dentro.
+                    Encender una banda decide las dos cosas a la vez: la mancha
+                    del mapa y las sedes que se cuentan.
+                  </>
+                )}{" "}
+                La línea punteada marca hasta dónde llega la grilla del USGS, no
+                hasta dónde llegó el temblor.
               </p>
             </div>
           )}
 
-          <FilaCapa
-            nombre="Sedes educativas"
-            activa={capas.sedes}
-            onAlternar={() => onCapas({ ...capas, sedes: !capas.sedes })}
-            muestra={<Gota color="var(--sede-base)" />}
-          />
+        </div>
+      )}
+    </Tarjeta>
+  );
+}
 
-          {/* Los filtros de la sede cuelgan de su propia capa. Antes vivian en
-              una tarjeta aparte y quedaba sin decir que recortan exactamente
-              esos puntos y ningun otro. */}
-          <div className="px-4 pt-1 pb-2 pl-8">
-            <Etiqueta>Secretaría</Etiqueta>
-            <div className="mb-2">
-              <Desplegable
-                opciones={secretarias}
-                elegidas={filtros.secretarias}
-                onAlternar={(v) =>
-                  set({ secretarias: alternaLista(filtros.secretarias, v) })
-                }
-                onLimpiar={() => set({ secretarias: [] })}
-              />
-            </div>
-
-            <button
-              onClick={() => setMasFiltros(!masFiltros)}
-              className="text-xs underline"
-              style={{ color: "var(--tinta-2)" }}
-            >
-              {masFiltros ? "Menos filtros" : "Más filtros"}
-            </button>
-
-            {masFiltros && (
+/** Los siete cortes que deciden que sedes se cuentan.
+ *
+ * Salio de dentro de `TarjetaCapas` el 21 de agosto de 2026, cuando la fila de
+ * sedes paso a guardar tambien el buscador. Con las dos cosas en linea la
+ * funcion pasaba de trescientas lineas de JSX y no habia como ver donde
+ * terminaba un control y empezaba el siguiente.
+ *
+ * No decide nada: recibe `filtros` y el `set` de quien lo dibuja. Aqui solo
+ * estan los controles y la explicacion de cada uno.
+ */
+function BloqueFiltros({
+  abierto,
+  filtros,
+  set,
+  alternaLista,
+  zonas,
+  resumen,
+  capas,
+  onCapas,
+}: {
+  abierto: boolean;
+  filtros: Filtros;
+  set: (p: Partial<Filtros>) => void;
+  alternaLista: (lista: string[], v: string) => string[];
+  zonas: string[];
+  resumen: Resumen;
+  capas: Capas;
+  onCapas: (c: Capas) => void;
+}) {
+  if (!abierto) return null;
+  return (
               <div className="mt-2">
                 {/* Zona y no "área": el área de tres categorías es otra columna
                     y vive en la ficha de cada sede. Con el mismo nombre para
@@ -1211,9 +1817,52 @@ function TarjetaCapas({
                       <Opcion
                         key={z}
                         activo={filtros.zonas.includes(z)}
-                        onClick={() => set({ zonas: alternaLista(filtros.zonas, z) })}
+                        onClick={() =>
+                          set({ zonas: alternaLista(filtros.zonas, z) })
+                        }
                       >
                         {NOMBRE_ZONA[z] ?? z}
+                      </Opcion>
+                    ))}
+                  </Chips>
+                </div>
+
+                <div className="mb-1 text-xs" style={{ color: "var(--tinta-3)" }}>
+                  Matrícula mínima:{" "}
+                  <span className="num">{miles(filtros.matriculaMin)}</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={1000}
+                  step={25}
+                  value={filtros.matriculaMin}
+                  onChange={(e) => set({ matriculaMin: Number(e.target.value) })}
+                  className="w-full"
+                />
+
+                <div
+                  className="mt-2 mb-1 text-xs"
+                  style={{ color: "var(--tinta-3)" }}
+                >
+                  Quintil de riqueza del entorno
+                  <Info texto="Quintiles nacionales del índice de riqueza relativa de Meta, calculados sobre las 52.823 sedes del país. El primer quintil reúne el 20 % de las sedes en los entornos más pobres. Las sedes sin el dato quedan por fuera si se elige un quintil." />
+                </div>
+                <div className="mb-3">
+                  <Chips>
+                    {[1, 2, 3, 4, 5].map((q) => (
+                      <Opcion
+                        key={q}
+                        activo={filtros.quintiles.includes(q)}
+                        onClick={() =>
+                          set({
+                            quintiles: filtros.quintiles.includes(q)
+                              ? filtros.quintiles.filter((x) => x !== q)
+                              : [...filtros.quintiles, q],
+                          })
+                        }
+                      >
+                        {NOMBRE_QUINTIL[q]}
                       </Opcion>
                     ))}
                   </Chips>
@@ -1261,45 +1910,6 @@ function TarjetaCapas({
                   </Chips>
                 </div>
 
-                <div className="mb-1 text-xs" style={{ color: "var(--tinta-3)" }}>
-                  Matrícula mínima:{" "}
-                  <span className="num">{miles(filtros.matriculaMin)}</span>
-                </div>
-                <input
-                  type="range"
-                  min={0}
-                  max={1000}
-                  step={25}
-                  value={filtros.matriculaMin}
-                  onChange={(e) => set({ matriculaMin: Number(e.target.value) })}
-                  className="w-full"
-                />
-
-                <div
-                  className="mt-2 mb-1 text-xs"
-                  style={{ color: "var(--tinta-3)" }}
-                >
-                  Quintil de riqueza del entorno
-                  <Info texto="Quintiles nacionales del índice de riqueza relativa de Meta, calculados sobre las 52.823 sedes del país. El primer quintil reúne el 20 % de las sedes en los entornos más pobres. Las sedes sin el dato quedan por fuera si se elige un quintil." />
-                </div>
-                <Chips>
-                  {[1, 2, 3, 4, 5].map((q) => (
-                    <Opcion
-                      key={q}
-                      activo={filtros.quintiles.includes(q)}
-                      onClick={() =>
-                        set({
-                          quintiles: filtros.quintiles.includes(q)
-                            ? filtros.quintiles.filter((x) => x !== q)
-                            : [...filtros.quintiles, q],
-                        })
-                      }
-                    >
-                      {NOMBRE_QUINTIL[q]}
-                    </Opcion>
-                  ))}
-                </Chips>
-
                 <label className="mt-2 flex items-start gap-2 text-xs">
                   <input
                     type="checkbox"
@@ -1313,19 +1923,136 @@ function TarjetaCapas({
                     en la selección)
                   </span>
                 </label>
-              </div>
-            )}
-          </div>
 
-          <FilaCapa
-            nombre="Huellas de edificio"
-            nota="desde el zoom 15"
-            activa={capas.huellas}
-            onAlternar={() => onCapas({ ...capas, huellas: !capas.huellas })}
-          />
-        </div>
+                {/* La capa de huellas es un interruptor de dibujo, no un filtro,
+                    y por eso estaba fuera con las demas capas. Baja aqui porque
+                    se toca una vez al mes: solo aparece desde el zoom 15, o sea
+                    cuando ya se esta mirando un predio concreto. */}
+                <label className="mt-3 flex items-start gap-2 text-xs">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={capas.huellas}
+                    onChange={(e) =>
+                      onCapas({ ...capas, huellas: e.target.checked })
+                    }
+                  />
+                  <span style={{ color: "var(--tinta-2)" }}>
+                    Huellas de edificio (desde el zoom 15)
+                  </span>
+                </label>
+              </div>
+  );
+}
+
+/** Encontrar una escuela por su nombre y llegar hasta ella.
+ *
+ * Existe porque hasta hoy no habia forma de contestar la pregunta mas simple de
+ * la pantalla: donde esta esta sede. Habia que reconocerla entre cinco mil
+ * puntos, o adivinar que combinacion de filtros la dejaba sola.
+ *
+ * Busca sobre la seleccion que hay en pantalla y no sobre las 52.823 del pais.
+ * Un resultado que el mapa no esta dibujando mandaria a buscar un punto que no
+ * existe; cuando la seleccion esta recortada se dice, para que quien no
+ * encuentre su escuela sepa que puede estar detras de un filtro y no ausente.
+ *
+ * Tres caracteres antes de listar nada. Con uno solo la lista trae miles de
+ * filas y no ayuda a elegir.
+ */
+function BuscadorSede({
+  sedes,
+  ocultas,
+  onIrASede,
+  conFiltros,
+}: {
+  sedes: RasgoSede[];
+  ocultas: Set<string>;
+  onIrASede: (dane: string) => void;
+  /** Si algun filtro esta recortando la seleccion. Cambia lo que dice la
+   *  pantalla cuando no hay ninguna coincidencia. */
+  conFiltros: boolean;
+}) {
+  const [busca, setBusca] = useState("");
+  const q = busca.trim().toLowerCase();
+  const buscando = q.length >= 3;
+  // El nombre del establecimiento tambien cuenta: quien busca "Carrasquilla"
+  // esta pensando en el colegio, y sus sedes anexas no llevan ese nombre.
+  const halladas = buscando
+    ? sedes.filter((f) => {
+      if (ocultas.has(f.properties.dane)) return false;
+      const s = f.properties;
+      return s.sede.toLowerCase().includes(q)
+        || s.mpio.toLowerCase().includes(q)
+        || (s.establecimiento ?? "").toLowerCase().includes(q)
+        || s.dane.startsWith(q);
+    })
+    : [];
+
+  return (
+    <div>
+      <input
+        value={busca}
+        onChange={(e) => setBusca(e.target.value)}
+        placeholder="Buscar sede por nombre, municipio o código DANE"
+        className="w-full rounded border px-2 py-1 text-[11px]"
+        style={{
+          borderColor: "var(--linea)",
+          background: "var(--superficie)",
+        }}
+      />
+
+      {buscando && halladas.length === 0 && (
+        <p className="pt-1.5 text-[10px] leading-relaxed"
+           style={{ color: "var(--tinta-3)" }}>
+          Ninguna sede de la selección coincide.
+          {conFiltros
+            ? " Puede existir y estar fuera de los filtros encendidos."
+            : ""}
+        </p>
       )}
-    </Tarjeta>
+
+      {halladas.length > 0 && (
+        <>
+          <div
+            className="mt-1 max-h-44 overflow-y-auto overscroll-contain rounded border"
+            style={{ borderColor: "var(--linea)" }}
+          >
+            {halladas.slice(0, MAX_HALLADAS).map((f) => (
+              <button
+                key={f.properties.dane}
+                onClick={() => onIrASede(f.properties.dane)}
+                className="block w-full border-b px-2 py-1 text-left last:border-b-0"
+                style={{ borderColor: "var(--linea)" }}
+                title="ir a esta sede y abrir su ficha"
+              >
+                <span className="block truncate text-[11px]">
+                  {f.properties.sede}
+                </span>
+                <span
+                  className="block truncate text-[10px]"
+                  style={{ color: "var(--tinta-3)" }}
+                >
+                  {f.properties.mpio} ·{" "}
+                  <span className="num">{miles(f.properties.matricula)}</span>{" "}
+                  alumnos
+                </span>
+              </button>
+            ))}
+          </div>
+          <p className="pt-1 text-[10px]" style={{ color: "var(--tinta-3)" }}>
+            <span className="num">{miles(halladas.length)}</span>{" "}
+            {halladas.length === 1 ? "coincidencia" : "coincidencias"}
+            {halladas.length > MAX_HALLADAS && (
+              <>
+                , se listan las primeras{" "}
+                <span className="num">{MAX_HALLADAS}</span>
+              </>
+            )}
+            . Al hacer clic el mapa vuela a la sede y abre su ficha.
+          </p>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -1734,6 +2461,12 @@ function FilaCapa({
             <span style={{ color: "var(--tinta-3)" }}> ({nota})</span>
           )}
         </span>
+        {/* Con caret la muestra de color pasa a la derecha, porque el hueco de
+            la izquierda ya lo ocupa el caret. Meterla al lado del nombre
+            correria el rotulo de esa fila y las tres del panel dejarian de
+            arrancar en la misma columna, que es justo lo que las hace leerse al
+            mismo nivel. */}
+        {onPlegar && muestra && <span className="shrink-0">{muestra}</span>}
         {ayuda && <Info texto={ayuda} fuente={fuente} />}
         <button
           onClick={onAlternar}
@@ -2104,34 +2837,56 @@ function Casilla({
   onDesglose?: () => void;
   desglosado?: boolean;
 }) {
-  // El chevron va dentro de la misma píldora pero como botón aparte. Anidar
-  // botones no es HTML válido y el navegador se queda con el de fuera, así que
-  // tocar el desglose habría apagado la casilla entera.
+  // El chevron va en la misma fila pero como botón aparte. Anidar botones no es
+  // HTML válido y el navegador se queda con el de fuera, así que tocar el
+  // desglose habría apagado la casilla entera.
+  //
+  // Casilla de verdad y no una píldora, desde el 21 de agosto de 2026. La
+  // píldora dice "esto es una etiqueta que se puede encender" y estas cuatro
+  // filas son lo contrario: un filtro que arranca con dos de cuatro marcadas y
+  // que decide qué dibuja el mapa. Puestas en columna se veía mejor el problema,
+  // porque cada píldora medía lo que medía su texto y los números quedaban en
+  // cuatro columnas distintas. Con la casilla y el número al final de la fila,
+  // los cuatro se leen uno debajo del otro, que es como se compara.
+  //
+  // El visto es el mismo cuadrado de 3,5 que usan las bandas de intensidad en la
+  // columna izquierda. Es el mismo tipo de decisión y tiene que verse igual.
   return (
-    <span
-      className="flex items-center rounded-full border text-[11px]"
-      style={{
-        borderColor: activa ? "var(--acento)" : "var(--linea)",
-        color: activa ? "var(--tinta)" : "var(--tinta-3)",
-        background: activa ? "var(--plano)" : "transparent",
-      }}
-    >
+    <span className="flex w-full items-center text-[11px]">
       <button
         onClick={onAlternar}
         title={nota}
         aria-pressed={activa}
-        className={`flex items-center gap-1.5 py-0.5 pl-2.5 ${
-          onDesglose ? "pr-1" : "pr-2.5"}`}
+        className="flex min-w-0 flex-1 items-center gap-2 py-0.5 text-left"
       >
-        {nombre}
-        <span className="num" style={{ color: "var(--tinta-3)" }}>
+        <span
+          className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border text-[9px] leading-none"
+          style={{
+            borderColor: activa ? "var(--tinta)" : "var(--linea)",
+            background: activa ? "var(--tinta)" : "transparent",
+            color: "var(--superficie)",
+          }}
+        >
+          {activa ? "✓" : ""}
+        </span>
+        <span
+          className="min-w-0 flex-1 truncate"
+          style={{ color: activa ? "var(--tinta)" : "var(--tinta-3)" }}
+        >
+          {nombre}
+        </span>
+        <span className="num shrink-0" style={{ color: "var(--tinta-3)" }}>
           {miles(n)}
         </span>
       </button>
-      {onDesglose && (
+      {/* El hueco del caret se reserva siempre, tenga desglose o no. Sin eso los
+          números de las filas con caret quedaban 12 px a la izquierda de los de
+          las que no lo tienen, y la columna que se acaba de conseguir se
+          rompía en la mitad de la lista. */}
+      {onDesglose ? (
         <button
           onClick={onDesglose}
-          className="py-0.5 pl-0.5 pr-1.5"
+          className="w-3 shrink-0"
           style={{ color: "var(--tinta-3)" }}
           aria-expanded={desglosado}
           aria-label={desglosado
@@ -2143,6 +2898,8 @@ function Casilla({
         >
           {desglosado ? "▾" : "▸"}
         </button>
+      ) : (
+        <span className="w-3 shrink-0" />
       )}
     </span>
   );
