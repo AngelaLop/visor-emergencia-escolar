@@ -43,6 +43,50 @@
   --banda-2: #cfcec8;
   --banda-3: #a9a7a1;
   --banda-linea: #6f6d66;
+
+  /* La rampa de carencia de la tarjeta de caracteristicas. Un solo tono, en
+     pasos monotonos de luminosidad, y oscuro es el extremo de carencia: rural
+     antes que urbana, sin servicio antes que con servicio, poco acueducto antes
+     que mucho. Asi la tarjeta entera se lee con una sola frase, "cuanto mas
+     oscuro, mas carencia", y no hay que aprender un codigo por fila.
+
+     Es el turquesa de CIMA llevado a cinco pasos. Pasa el validador como rampa
+     ordinal en modo claro: luminosidad monotona, salto de 0,06 entre pasos y el
+     extremo claro a 2,08:1 sobre la superficie, que es lo minimo para que el
+     paso mas palido no se confunda con la tarjeta.
+
+     `--ent-nulo` queda fuera de la rampa a proposito. El sin dato no es un grado
+     de carencia: no ocupa un lugar en la escala y no puede llevar un tono que lo
+     sugiera. */
+  --ent-1: #6ac0b8;
+  --ent-2: #4aa39b;
+  --ent-3: #2f8780;
+  --ent-4: #1d6b65;
+  --ent-5: #0d504b;
+  --ent-nulo: #aaa9a1;
+
+  /* El resalte del mapa cuando se toca un segmento de la tarjeta. Ambar, y no
+     un paso de la rampa, porque tiene que separarse de los tres colores de
+     fuente de dano que ya viven en el mapa. Medido contra los tres: la peor
+     pareja a vision normal queda en 26,4 y el contraste sobre la superficie
+     clara en 3,31:1. */
+  /* El color del rotulo que va escrito dentro de cada paso. Medido uno por uno
+     con el validador: ninguna de estas parejas baja de 4,5:1. Va por variable y
+     no por regla en el componente porque la eleccion se invierte con el tema,
+     igual que la rampa: sobre el paso mas claro el texto es tinta aqui, y sobre
+     ese mismo paso, que en oscuro es el mas apagado, es blanco. */
+  --ent-txt-1: #0b0b0b;
+  --ent-txt-2: #0b0b0b;
+  --ent-txt-3: #0b0b0b;
+  --ent-txt-4: #ffffff;
+  --ent-txt-5: #ffffff;
+  --ent-txt-nulo: #0b0b0b;
+  --resalte-txt: #0b0b0b;
+  --resalte: #b88100;
+  /* Las sedes que quedan fuera del resalte. No desaparecen: se apagan, porque
+     el resalte es una pregunta sobre un subconjunto y borrar el resto diria que
+     no existe. */
+  --apagado: #c9c8c1;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -68,6 +112,27 @@
     --banda-2: #3a3a36;
     --banda-3: #55544e;
     --banda-linea: #a8a69c;
+
+    /* La misma rampa con el ancla invertida, que es lo que pide una rampa
+       secuencial en modo oscuro: sobre fondo negro el extremo de carencia es el
+       brillante y el de holgura el apagado. Validada contra la superficie oscura,
+       con el extremo mas apagado a 2,58:1. */
+    --ent-1: #256560;
+    --ent-2: #31877f;
+    --ent-3: #48aaa1;
+    --ent-4: #6dcbc2;
+    --ent-5: #9ce6dd;
+    --ent-nulo: #605f5a;
+
+    --ent-txt-1: #ffffff;
+    --ent-txt-2: #0b0b0b;
+    --ent-txt-3: #0b0b0b;
+    --ent-txt-4: #0b0b0b;
+    --ent-txt-5: #0b0b0b;
+    --ent-txt-nulo: #ffffff;
+    --resalte-txt: #0b0b0b;
+    --resalte: #e3b23c;
+    --apagado: #3f3f3b;
   }
 }
 
@@ -92,6 +157,27 @@
   --banda-2: #3a3a36;
   --banda-3: #55544e;
   --banda-linea: #a8a69c;
+
+  /* La misma rampa con el ancla invertida, que es lo que pide una rampa
+     secuencial en modo oscuro: sobre fondo negro el extremo de carencia es el
+     brillante y el de holgura el apagado. Validada contra la superficie oscura,
+     con el extremo mas apagado a 2,58:1. */
+  --ent-1: #256560;
+  --ent-2: #31877f;
+  --ent-3: #48aaa1;
+  --ent-4: #6dcbc2;
+  --ent-5: #9ce6dd;
+  --ent-nulo: #605f5a;
+
+  --ent-txt-1: #ffffff;
+  --ent-txt-2: #0b0b0b;
+  --ent-txt-3: #0b0b0b;
+  --ent-txt-4: #0b0b0b;
+  --ent-txt-5: #0b0b0b;
+  --ent-txt-nulo: #ffffff;
+  --resalte-txt: #0b0b0b;
+  --resalte: #e3b23c;
+  --apagado: #3f3f3b;
 }
 
 html,

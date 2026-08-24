@@ -44,7 +44,21 @@ type Props = {
    *  bajo el mismo rótulo diría dos cosas distintas según una casilla que está
    *  en otra tarjeta. */
   soloDanos: boolean;
+  /** El tramo resaltado desde la tarjeta de características, si hay uno.
+   *
+   * El resalte no recorta el mapa: allí las demás sedes siguen dibujadas, en
+   * gris, porque la pregunta que contesta es cuáles de estas cumplen la
+   * condición y para contestarla hay que ver las otras. Pero sí tiene que llegar
+   * hasta aquí, porque es el recorte con el que alguien quiere bajarse el CSV, y
+   * un botón que dice "descargar la selección" tiene que decir cuál.
+   *
+   * Por eso se muestra como una línea aparte y no reemplazando el número grande:
+   * el número grande cuenta lo que hay en el mapa y tiene que seguir haciéndolo.
+   * Las dos cifras conviven escritas, y así ninguna de las dos miente. */
+  resalte: { n: number; etiqueta: string } | null;
   onExportar: () => void;
+  /** Baja solo las resaltadas. Nulo cuando no hay resalte. */
+  onExportarResalte: (() => void) | null;
 };
 
 export default function ControlDerecho({
@@ -52,14 +66,16 @@ export default function ControlDerecho({
   conDano,
   conDanoFuera,
   soloDanos,
+  resalte,
   onExportar,
+  onExportarResalte,
 }: Props) {
   const rotulo = soloDanos
     ? "sedes educativas con daño reportado"
     : "sedes educativas seleccionadas";
 
   return (
-    <div className="pointer-events-auto flex w-full flex-col gap-2 md:w-60">
+    <div className="pointer-events-auto flex w-full flex-col gap-2">
       <section
         className="rounded-lg border shadow-md"
         style={{ background: "var(--superficie)", borderColor: "var(--borde)" }}
@@ -95,11 +111,20 @@ export default function ControlDerecho({
               title={
                 "Sedes de la selección que el mapa dibuja con daño."
                 + (conDanoFuera > 0
-                  ? ` La tarjeta de daños cuenta ${miles(conDano + conDanoFuera)}`
+                  ? ` La capa de daños dibuja ${miles(conDano + conDanoFuera)}`
                     + `: las otras ${miles(conDanoFuera)} tienen reporte y no`
-                    + " están en el marco de sedes de este visor, porque caen"
-                    + " fuera de la grilla del USGS, no llegan a MMI 4,0 o no"
-                    + " están en el SIMAT de 2022. El mapa las dibuja igual."
+                    + " están en el listado de sedes de este visor. Son de tres"
+                    + " clases y solo dos tienen que ver con el sismo: las que"
+                    + " el directorio no sabe dónde quedan, y cuyo punto se"
+                    + " dibuja con la coordenada que publica el MEN; las que"
+                    + " caen fuera de la grilla del ShakeMap del USGS, que no"
+                    + " llega hasta allí; y las que quedan por debajo de MMI"
+                    + " 4,0, que es el mínimo que exporta este visor. El mapa"
+                    + " las dibuja igual, porque una fuente afirmando que una"
+                    + " escuela se cayó no depende de que nuestro listado la"
+                    + " tenga. Con todas las bandas de intensidad apagadas sí"
+                    + " entran al conteo: ahí no se está preguntando por la"
+                    + " intensidad de nadie."
                   : "")
               }
             >
@@ -113,13 +138,79 @@ export default function ControlDerecho({
                 className="text-[11px] leading-tight"
                 style={{ color: "var(--tinta-2)" }}
               >
-                con daño reportado
+                {/* El rótulo cambia cuando debajo aparece la segunda cifra.
+                    Con las dos en pantalla, "con daño reportado" a secas ya no
+                    distingue: las dos lo están, y lo que las separa es que ésta
+                    cuenta solo dentro de la selección. La nota queda en la de
+                    abajo, que es la que necesita explicación. */}
+                {conDanoFuera > 0
+                  ? "con daño, dentro de la selección"
+                  : "con daño reportado"}
+              </span>
+            </div>
+          )}
+
+          {/* Las dos cifras de daño, una debajo de la otra y con la misma
+              forma. Estuvo como una resta, "+47 fuera del listado = 1.791
+              dibujadas", y no se entendía: obligaba a hacer la cuenta para
+              descubrir que la de arriba y la de abajo contestan preguntas
+              distintas. Dos líneas paralelas lo dicen sin aritmética, porque lo
+              único que cambia entre ellas es el rótulo, que es justo donde está
+              la diferencia.
+
+              Antes de eso la resta ni siquiera se veía: vivía dentro del `title`
+              mientras la pantalla mostraba 1.744 aquí y 1.791 en las tarjetas de
+              abajo, a diez centímetros, sin nada visible que dijera por qué. */}
+          {!soloDanos && conDano > 0 && conDanoFuera > 0 && (
+            <div
+              className="mt-0.5 flex items-baseline gap-1.5"
+              title={
+                `${miles(conDanoFuera)} sedes con reporte que el listado de este`
+                + " visor no trae, así que el mapa las dibuja y el conteo de"
+                + " arriba no las incluye."
+              }
+            >
+              <span
+                className="num text-sm font-semibold leading-none"
+                style={{ color: "var(--critico)" }}
+              >
+                {miles(conDano + conDanoFuera)}
+              </span>
+              <span
+                className="text-[11px] leading-tight"
+                style={{ color: "var(--tinta-2)" }}
+              >
+                con daño, dibujadas en el mapa
                 {/* La marca de que hay una nota detrás. Sin ella el título del
-                    navegador no se descubre, y esta es justo la cifra sobre la
+                    navegador no se descubre, y ésta es justo la cifra sobre la
                     que alguien va a querer preguntar. */}
-                {conDanoFuera > 0 && (
-                  <span style={{ color: "var(--tinta-3)" }}> ⓘ</span>
-                )}
+                <span style={{ color: "var(--tinta-3)" }}> ⓘ</span>
+              </span>
+            </div>
+          )}
+
+          {/* El resalte va debajo de las dos de daño y no entre ellas: no es
+              otra forma de contar lo mismo, es un recorte que alguien pidió. */}
+          {resalte && (
+            <div
+              className="mt-1 flex items-baseline gap-1.5"
+              title={
+                "El tramo encendido en la tarjeta de características. En el mapa"
+                + " van en ámbar y las demás siguen dibujadas, apagadas. El botón"
+                + " de descarga de abajo baja exactamente estas."
+              }
+            >
+              <span
+                className="num text-sm font-semibold leading-none"
+                style={{ color: "var(--resalte)" }}
+              >
+                {miles(resalte.n)}
+              </span>
+              <span
+                className="min-w-0 flex-1 truncate text-[11px] leading-tight"
+                style={{ color: "var(--tinta-2)" }}
+              >
+                {resalte.etiqueta}
               </span>
             </div>
           )}
@@ -189,6 +280,23 @@ export default function ControlDerecho({
           <IconoDescarga />
           {soloDanos ? "Descargar las sedes con daño en CSV" : "Descargar la selección en CSV"}
         </button>
+
+        {/* El segundo botón, y no uno solo que cambie de destino. Con un botón
+            que a veces baja una cosa y a veces otra, quien lo pulsa tiene que
+            acordarse de qué había encendido; con dos, el archivo que va a salir
+            está escrito en el botón que se pulsa. */}
+        {resalte && onExportarResalte && (
+          <button
+            onClick={onExportarResalte}
+            disabled={!resalte.n}
+            className="hidden w-full items-center gap-1.5 border-t px-4 py-2 text-[11px] disabled:opacity-40 md:flex"
+            style={{ borderColor: "var(--linea)", color: "var(--resalte)" }}
+          >
+            <IconoDescarga />
+            Descargar las <span className="num">{miles(resalte.n)}</span>{" "}
+            resaltadas en CSV
+          </button>
+        )}
       </section>
     </div>
   );

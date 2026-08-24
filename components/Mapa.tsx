@@ -36,7 +36,7 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef, useState } from "react";
 
-import { cargaHuellas, miles, TONO_IVID } from "@/lib/datos";
+import { cargaHuellas, miles, sinRecorteDeBanda, TONO_IVID } from "@/lib/datos";
 import {
   BANDAS,
   NOMBRE_EMISOR,
@@ -54,6 +54,7 @@ import type {
   Filtros,
   MapaBase,
   RasgoSede,
+  Resalte,
   Tema,
 } from "@/lib/tipos";
 
@@ -86,6 +87,15 @@ export const BASE = { claro: "#33414d", oscuro: "#d7dee4" };
 // intensidad, y un tono no puede significar dos cosas en el mismo mapa.
 export const CARENCIA = { claro: "#4a3aa7", oscuro: "#9085e9" };
 export const REPORTE = "#b3261e";
+
+/** El ambar del resalte, y el tono al que se apaga todo lo demas.
+ *
+ * Ambar y no un paso de la rampa turquesa de la tarjeta: en el mapa ya viven los
+ * tres colores de fuente de dano, y uno de ellos, el cian de ChatMap, es de la
+ * misma familia que esa rampa. Medido contra los tres con el validador de la
+ * paleta: la peor pareja a vision normal queda en 26,4 y el contraste sobre la
+ * superficie clara en 3,31:1. Sobre la oscura, 8,87:1. */
+export const RESALTE = { claro: "#b88100", oscuro: "#e3b23c" };
 
 /** Un color por emisor de reporte, no por gravedad.
  *
@@ -172,6 +182,27 @@ type Props = {
    * Viaja como filtro de capa, no rehaciendo la fuente. Reescribir 26 mil
    * rasgos en cada casilla de daño era lo que dejaba el mapa trabado. */
   danesConPin: string[];
+  /** El subconjunto que la tarjeta de caracteristicas esta resaltando, o `null`.
+   *
+   * Viaja como conjunto de codigos DANE ya resuelto y no como una expresion
+   * sobre un atributo, porque las tres clases de fila de esa tarjeta preguntan
+   * por cosas que no viven en el mismo sitio: la zona esta en la sede, el
+   * acueducto del entorno se calculo aparte y el estado operativo esta en el
+   * reporte. Con el conjunto resuelto en React, el mapa no tiene que saber de
+   * donde salio.
+   *
+   * Resaltar no recorta: las demas sedes no desaparecen, se apagan. Lo hace en
+   * dos movimientos, bajar la opacidad de las capas de dano y volver a dibujar
+   * encima las resaltadas en ambar. */
+  resalte: Resalte | null;
+  /** Si los controles del mapa se van al lado izquierdo.
+   *
+   * Al desplegar la tarjeta de caracteristicas la columna derecha pasa de 240 a
+   * 360 px y se come la esquina donde viven el zoom, el boton de volver al
+   * inicio y la escala. No se puede mover un control en MapLibre: hay que
+   * quitarlo y volver a anadirlo en la otra posicion, y por eso las tres
+   * instancias se guardan. */
+  controlesIzquierda: boolean;
 };
 
 type Expr = maplibregl.ExpressionSpecification;
@@ -215,6 +246,22 @@ function filtroDanos(estados: EstadoDano[], todas: boolean,
 function filtroSinGris(danes: string[]): Expr | null {
   if (danes.length === 0) return null;
   return ["!", ["in", ["get", "dane"], ["literal", danes]]] as Expr;
+}
+
+/** El filtro de la capa de resalte: lo mismo que dibujan las capas de dano, y
+ *  ademas estar en el conjunto resaltado.
+ *
+ *  Con `null` o con el conjunto vacio devuelve un filtro que no deja pasar a
+ *  nadie, que es justo lo que hace falta: sin resalte no hay nada que pintar en
+ *  ambar. Es lo contrario de `filtroSinGris`, donde la lista vacia significa "no
+ *  escondas nada". */
+function filtroResalte(c: Capas, danes: string[] | null): Expr {
+  const lista = danes ?? [];
+  if (lista.length === 0) return ["==", ["literal", 1], ["literal", 0]] as Expr;
+  const conDano = c.estadosDano.filter((e) => e !== "sin_dano");
+  return ["all",
+    filtroDanos(conDano, c.danosTodasLasBandas, c.subtipos, c.emisores),
+    ["in", ["get", "dane"], ["literal", lista]]] as Expr;
 }
 
 /** Que se dibuja encima del mapa base. Lo maneja la tarjeta de capas. */
@@ -468,6 +515,8 @@ export default function Mapa({
   foco,
   onSeleccion,
   danesConPin,
+  resalte,
+  controlesIzquierda,
 }: Props) {
   const div = useRef<HTMLDivElement>(null);
   const mapa = useRef<maplibregl.Map | null>(null);
@@ -476,6 +525,8 @@ export default function Mapa({
    *  con eso vuelven a correr los efectos que escriben en el mapa. Ver
    *  `cuandoListo`. */
   const [generacion, setGeneracion] = useState(0);
+  const controles = useRef<maplibregl.IControl[]>([]);
+  const ladoControles = useRef<"bottom-left" | "bottom-right">("bottom-right");
   const cacheHuellas = useRef(new Map<string, unknown>());
   const marcaEpicentro = useRef<maplibregl.Marker | null>(null);
   /** Si la corrida anterior tenia territorio dibujado. Distingue "se quito la
@@ -489,9 +540,11 @@ export default function Mapa({
   // Cambiar de tema recarga el estilo entero y con el se van todas las fuentes,
   // asi que hay que poder volver a montarlas con los datos que hubiera.
   const datos = useRef({ contornos, bordeGrilla, colombia, secretarias, sedes,
-    danos, danesConReporte, danesConPin, filtros, capas, tema });
+    danos, danesConReporte, danesConPin, filtros, capas, tema,
+    controlesIzquierda });
   datos.current = { contornos, bordeGrilla, colombia, secretarias, sedes,
-    danos, danesConReporte, danesConPin, filtros, capas, tema };
+    danos, danesConReporte, danesConPin, filtros, capas, tema,
+    controlesIzquierda };
   const alClic = useRef(onSeleccion);
   alClic.current = onSeleccion;
 
@@ -515,7 +568,10 @@ export default function Mapa({
     // `coordinates: [null, null]`, que MapLibre acepta sin quejarse y deja el
     // punto en un sitio que no existe.
     const bandas = datos.current.filtros.bandas;
-    const sinRecorte = datos.current.filtros.secretarias.length > 0;
+    // La misma pregunta que hace la tarjeta de danos para decidir si ofrece la
+    // casilla de "ver todas las sedes reportadas". Una sola regla, en
+    // `lib/datos.ts`, porque las dos tienen que decir lo mismo.
+    const sinRecorte = sinRecorteDeBanda(datos.current.filtros);
     return [...peor.values()].filter((d) => d.lon != null && d.lat != null)
       .map((d) => ({
       type: "Feature" as const,
@@ -988,6 +1044,36 @@ export default function Mapa({
       },
     });
 
+    // Las resaltadas, encima de todo lo demas y en ambar.
+    //
+    // Se dibujan otra vez en vez de recolorear las capas de abajo, porque una de
+    // ellas es de simbolos y su color vive dentro del icono: teñir un pin
+    // obligaria a registrar un juego de iconos por cada color posible. Con una
+    // capa aparte, el resalte funciona igual de lejos y de cerca.
+    //
+    // Lleva el mismo filtro de estado que las capas de dano. Sin el, apagar una
+    // casilla dejaria el punto ambar de una sede que el mapa ya no dibuja.
+    m.addLayer({
+      id: "danos-resalte",
+      type: "circle",
+      source: "danos",
+      filter: filtroResalte(d.capas, null),
+      layout: { visibility: visible(d.capas.reportes) },
+      paint: {
+        // Exactamente el mismo tamano que el punto de dano, incluido su halo.
+        // No es una capa distinta a los ojos de quien mira: es el mismo punto
+        // cambiado de color, y cualquier otro tamano lo convertiria en otra cosa.
+        // Estuvo de 4,2 a 8 y el ambar tapaba el punto en vez de marcarlo; luego
+        // por debajo, y entonces desaparecia entre los demas. Si estos numeros
+        // cambian, tienen que cambiar los dos a la vez: ver `danos-punto`.
+        "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 3.2, 14, 6.5],
+        "circle-color": RESALTE[d.tema],
+        "circle-opacity": 0.95,
+        "circle-stroke-color": d.tema === "claro" ? "#ffffff" : "#0b0b0b",
+        "circle-stroke-width": 1.3,
+      },
+    });
+
     // El anillo de la sede abierta, del color de su fuente y no del negro de la
     // seleccion normal. Al llegar volando hasta aqui, lo primero que hay que
     // reconocer es de quien es el reporte, y el color es lo que lo dice.
@@ -1026,15 +1112,19 @@ export default function Mapa({
       ...VISTA_INICIAL,
       attributionControl: { compact: true },
     });
-    m.addControl(
+    // Se guardan las tres instancias porque mudarlas de esquina obliga a
+    // quitarlas y volver a anadirlas con la misma instancia. El lado inicial es
+    // el que corresponda a como abre la pantalla, no siempre la derecha: si la
+    // tarjeta de caracteristicas ya venia desplegada, anadirlos a la derecha y
+    // mudarlos despues los haria saltar a la vista.
+    controles.current = [
       new maplibregl.NavigationControl({ showCompass: false }),
-      "bottom-right",
-    );
-    m.addControl(new ControlInicio(() => alClic.current(null)), "bottom-right");
-    m.addControl(
+      new ControlInicio(() => alClic.current(null)),
       new maplibregl.ScaleControl({ maxWidth: 120, unit: "metric" }),
-      "bottom-right",
-    );
+    ];
+    ladoControles.current = datos.current.controlesIzquierda
+      ? "bottom-left" : "bottom-right";
+    for (const c of controles.current) m.addControl(c, ladoControles.current);
     mapa.current = m;
 
     const emergente = new maplibregl.Popup({
@@ -1120,6 +1210,9 @@ export default function Mapa({
       m.remove();
       mapa.current = null;
       listo.current = false;
+      // Los controles se van con el mapa. Sin vaciar la lista, el efecto que los
+      // muda de esquina intentaria quitarselos a un mapa que ya no existe.
+      controles.current = [];
     };
   }, []);
 
@@ -1184,6 +1277,31 @@ export default function Mapa({
       if (c && colombia) c.setData(colombia as never);
     });
   }, [contornos, bordeGrilla, colombia, generacion]);
+
+  /** Muda el zoom, el boton de inicio y la escala a la otra esquina.
+   *
+   * MapLibre no sabe mover un control: hay que quitarlo y volver a anadirlo, y
+   * con la misma instancia, porque `removeControl` compara por identidad. De ahi
+   * que las tres se guarden al crear el mapa.
+   *
+   * Solo cuando de verdad cambia de lado. Este efecto corre tambien al remontar
+   * las capas, y quitar y poner los controles en cada corrida los haria
+   * parpadear sin motivo.
+   *
+   * No usa `cuandoListo`: los controles no dependen de que el estilo haya
+   * terminado de cargar, viven en el DOM del contenedor y no en las capas.
+   */
+  useEffect(() => {
+    const m = mapa.current;
+    if (!m || controles.current.length === 0) return;
+    const lado = controlesIzquierda ? "bottom-left" : "bottom-right";
+    if (lado === ladoControles.current) return;
+    ladoControles.current = lado;
+    for (const c of controles.current) {
+      m.removeControl(c);
+      m.addControl(c, lado);
+    }
+  }, [controlesIzquierda]);
 
   useEffect(() => {
     cuandoListo((m) => {
@@ -1326,6 +1444,7 @@ export default function Mapa({
       ver("danos-punto", capas.reportes);
       ver("danos-pin", capas.reportes);
       ver("danos-sin", capas.reportes);
+      ver("danos-resalte", capas.reportes);
       ver("huellas-relleno", capas.huellas);
       ver("huellas-linea", capas.huellas);
     });
@@ -1346,9 +1465,45 @@ export default function Mapa({
       m.setFilter("danos-pin", conRecorte(conDanoAhora));
       m.setFilter("danos-punto", conRecorte(conDanoAhora));
       m.setFilter("danos-sin", conRecorte(sinDano ? ["sin_dano"] : []));
+      if (m.getLayer("danos-resalte")) {
+        m.setFilter("danos-resalte",
+                    filtroResalte(capas, resalte ? [...resalte.danes] : null));
+      }
     });
   }, [capas.estadosDano, capas.subtipos, capas.emisores,
-      capas.danosTodasLasBandas, generacion]);
+      capas.danosTodasLasBandas, capas, resalte, generacion]);
+
+  /** El resalte: apagar el resto y volver a dibujar encima las elegidas.
+   *
+   * Apagar y no esconder. Las sedes que quedan fuera del resalte siguen en el
+   * mapa, translucidas: la pregunta que contesta un resalte es cuales de estas
+   * cumplen la condicion, y para contestarla hay que poder ver las otras. Es la
+   * misma decision que ya tomo `atenua` con el recorte de bandas.
+   *
+   * Se apaga con un numero suelto y no con una expresion sobre el conjunto. Con
+   * quinientos y pico codigos dentro de un `in`, cada clic obligaria a MapLibre
+   * a evaluarlo rasgo por rasgo; asi la capa de abajo baja entera y la de arriba
+   * repone a las resaltadas a plena fuerza.
+   */
+  useEffect(() => {
+    cuandoListo((m) => {
+      if (!m.getLayer("danos-punto")) return;
+      const hay = resalte != null && resalte.danes.size > 0;
+      const atenua = (dentro: number, fuera: number): Expr =>
+        ["case", ["get", "en_seleccion"], dentro, fuera] as Expr;
+      m.setPaintProperty("danos-punto", "circle-opacity",
+                         atenua(hay ? 0.18 : 0.95, hay ? 0.08 : 0.35) as never);
+      m.setPaintProperty("danos-punto", "circle-stroke-opacity",
+                         atenua(hay ? 0.2 : 1, hay ? 0.1 : 0.4) as never);
+      m.setPaintProperty("danos-pin", "icon-opacity",
+                         atenua(hay ? 0.2 : 1, hay ? 0.1 : 0.4) as never);
+      m.setPaintProperty("danos-sin", "circle-stroke-opacity",
+                         atenua(hay ? 0.2 : 0.9, hay ? 0.1 : 0.35) as never);
+      m.setPaintProperty("danos-resalte", "circle-color", RESALTE[tema]);
+      m.setPaintProperty("danos-resalte", "circle-stroke-color",
+                         tema === "claro" ? "#ffffff" : "#0b0b0b");
+    });
+  }, [resalte, tema, generacion]);
 
   useEffect(() => {
     cuandoListo((m) => {

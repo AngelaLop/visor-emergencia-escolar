@@ -12,6 +12,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import CaracteristicasAfectadas from "@/components/CaracteristicasAfectadas";
 import ControlDerecho, { TarjetaMapaBase } from "@/components/ControlDerecho";
 import FichaSede from "@/components/FichaSede";
 import { CAPAS_INICIALES } from "@/components/Mapa";
@@ -31,12 +32,15 @@ import {
   cuentaDanosMarcados,
   danesConDano,
   danoMarcado,
+  danosMarcados,
   danosFuera,
   danosVisibles,
   filtra,
   indiceMarco,
   miles,
+  pideAtributos,
   resume,
+  sinRecorteDeBanda,
   resumeSin,
   sedesConDano,
   sinOcultas,
@@ -52,6 +56,7 @@ import type {
   MetaMen,
   RasgoSede,
   Reporte,
+  Resalte,
   Sede,
   Tema,
 } from "@/lib/tipos";
@@ -92,6 +97,19 @@ export default function Pagina() {
   const [filtros, setFiltros] = useState<Filtros>(FILTROS_INICIALES);
   const [capas, setCapas] = useState<Capas>(CAPAS_INICIALES);
   const [seleccion, setSeleccion] = useState<string | null>(null);
+  /** El subconjunto que la tarjeta de características está resaltando.
+   *
+   * Vive aquí y no dentro de la tarjeta porque lo consume el mapa, que es su
+   * hermano y no su hijo. Resaltar no toca `filtros` ni `capas`: ninguna de las
+   * cuentas de la pantalla cambia, que es exactamente lo que separa resaltar de
+   * recortar. */
+  const [resalte, setResalte] = useState<Resalte | null>(null);
+  /** Si el bloque de características está desplegado.
+   *
+   * También vive aquí porque decide el ancho de la columna derecha entera. Las
+   * barras no caben en los 240 px con los que abre la columna, y ensanchar solo
+   * la tarjeta de daños dejaría la pila con el borde izquierdo desigual. */
+  const [caracteristicas, setCaracteristicas] = useState(false);
   // Los logos van pegados a la izquierda de la atribución del mapa base, y esa
   // barra cambia de ancho con cada mapa: la de OpenStreetMap no dice lo mismo
   // que la de CARTO. Se mide en vez de suponer un margen fijo.
@@ -223,14 +241,11 @@ export default function Pagina() {
   // de daño no entran. Si entraran, cada clic reharía el GeoJSON y el resumen.
   // El gris debajo del pin lo apaga `danesConPin` con un setFilter. El
   // contador resta `danesOcultas` sobre el índice, sin volver a filtrar.
-  const sedesMarco = useMemo(
-    () => (coleccion ? filtra(coleccion, filtros, danesAfirmado) : []),
-    [coleccion, filtros, danesAfirmado],
-  );
-  const indice = useMemo(() => indiceMarco(sedesMarco), [sedesMarco]);
-  const resumen = useMemo(
-    () => resumeSin(indice, danesOcultas),
-    [indice, danesOcultas],
+  /** Solo los códigos, para saber cuáles trae el marco sin construir el índice
+   *  entero. Se necesita antes que `porDane`, que se arma más abajo. */
+  const coleccionTiene = useMemo(
+    () => new Set((coleccion?.features ?? []).map((f) => f.properties.dane)),
+    [coleccion],
   );
 
   // Los que de verdad se están dibujando, que es lo que tiene que contar el
@@ -241,6 +256,53 @@ export default function Pagina() {
       : danosEnMapa.filter(
         (d) => d.banda != null && filtros.bandas.includes(d.banda))),
     [danosEnMapa, capas.danosTodasLasBandas, filtros.bandas],
+  );
+
+  /** Las sedes con reporte que el marco no tiene, para poder contarlas.
+   *
+   * Son 47 y el mapa siempre las dibuja, porque una fuente afirmando que una
+   * escuela se cayó no depende de que nuestro marco la tenga. Lo que faltaba era
+   * que entraran en el conteo y en el CSV: hasta hoy la pantalla decía 1.744
+   * arriba mientras la capa dibujaba 1.791.
+   *
+   * De dónde salen, medido el 23 de agosto de 2026 contra la base maestra: 27 no
+   * tienen coordenada en el directorio y su punto se dibuja con la que publica el
+   * MEN; 11 caen fuera de la grilla del ShakeMap; 9 quedan por debajo de MMI 4,0.
+   * Ninguna es ajena al SIMAT de 2022, aunque este comentario lo dijo un tiempo.
+   * Los tres casos comparten el efecto y no la causa, así que el rótulo de
+   * pantalla habla del listado de sedes y no de la intensidad: más de la mitad de
+   * estas sedes no está fuera por el sismo, sino porque no sabemos dónde quedan.
+   *
+   * Entran solo cuando el recorte de intensidad no está recortando. Con bandas
+   * encendidas, "esta sede está en MMI 6,0" es justo lo que se está preguntando y
+   * de 20 de ellas no se puede contestar, porque no tienen MMI o lo tienen por
+   * debajo del mínimo. Meterlas ahí sería colarlas en una selección que dice
+   * mirar una intensidad que ellas no tienen.
+   *
+   * Y solo mientras nadie pregunte por un atributo. Llegan con nombre, municipio
+   * y matrícula y nada más: sin zona, sin quintil, sin C-600. En cuanto alguien
+   * filtra por zona no hay forma honesta de decir si pasan, y salen por la misma
+   * regla con la que `pasa` deja fuera a una sede sin quintil cuando se elige un
+   * quintil.
+   */
+  const fueraDelMarco = useMemo(() => {
+    if (!sinRecorteDeBanda(filtros) || pideAtributos(filtros)) return VACIAS;
+    return sedesConDano(coleccion, danosPintados, capas.estadosDano,
+                        capas.subtipos)
+      .filter((f) => !coleccionTiene.has(f.properties.dane));
+  }, [filtros, coleccion, coleccionTiene, danosPintados, capas.estadosDano,
+      capas.subtipos]);
+
+  const sedesMarco = useMemo(
+    () => (coleccion
+      ? [...filtra(coleccion, filtros, danesAfirmado), ...fueraDelMarco]
+      : []),
+    [coleccion, filtros, danesAfirmado, fueraDelMarco],
+  );
+  const indice = useMemo(() => indiceMarco(sedesMarco), [sedesMarco]);
+  const resumen = useMemo(
+    () => resumeSin(indice, danesOcultas),
+    [indice, danesOcultas],
   );
 
   /** Cuándo la pantalla está mostrando solo las escuelas con daño.
@@ -299,6 +361,30 @@ export default function Pagina() {
   );
   const resumenContado = soloDanos ? resumenDanos : resumen;
 
+  /** Las sedes del tramo resaltado, para poder bajarlas en CSV.
+   *
+   * Se resuelven contra el marco ya recortado y no contra la colección entera: lo
+   * que se descarga tiene que ser un subconjunto de lo que la pantalla dice estar
+   * mostrando. Si una sede resaltada quedó fuera por un filtro, no entra, y el
+   * número del botón lo dice porque se cuenta sobre esta misma lista.
+   *
+   * El marco ya trae las que no están en la colección, así que las 47 se bajan
+   * con las demás cuando corresponde. */
+  const sedesResaltadas = useMemo(() => {
+    if (!resalte) return VACIAS;
+    return sinOcultas(sedesMarco, danesOcultas)
+      .filter((f) => resalte.danes.has(f.properties.dane));
+  }, [resalte, sedesMarco, danesOcultas]);
+
+  /** El ancho de la columna derecha.
+   *
+   * 240 px mientras solo hay cifras, 360 cuando se despliegan las barras de
+   * características, que es lo que ya mide el panel izquierdo. Lo deciden aquí
+   * las tres tarjetas a la vez y no cada una por su cuenta: la franja ajusta al
+   * contenido, así que si solo creciera la de daños la pila quedaría con el
+   * borde izquierdo desigual. */
+  const anchoDerecha = caracteristicas ? "md:w-[22.5rem]" : "md:w-60";
+
   // El mismo recorte pero sin los sub-filtros de la última tarjeta. El relato
   // de "de la selección, N fueron encuestadas y el X % declaró avería" tiene
   // que seguir siendo verdad mientras se prende "no encuestadas": si se
@@ -344,6 +430,34 @@ export default function Pagina() {
         && d.concepto_tecnico === true).length,
     [danosPintados, capas.estadosDano, capas.subtipos],
   );
+
+  /** El universo de la tarjeta de características: un reporte por sede, el que
+   *  gana, y solo si su estado y su subtipo están marcados.
+   *
+   * Sale de `danosMarcados`, la misma función con la que la tarjeta de daños
+   * calcula el número de su encabezado. Es a propósito: las dos tarjetas son
+   * hermanas y hablan de las mismas sedes, y con dos cálculos paralelos ya se
+   * separaron antes en este visor. */
+  const marcadas = useMemo(
+    () => danosMarcados(danosPintados, capas.estadosDano, capas.subtipos),
+    [danosPintados, capas.estadosDano, capas.subtipos],
+  );
+
+  /** El directorio entero indexado por código DANE.
+   *
+   * Lo necesita la tarjeta de características para mirar la zona, el quintil y
+   * los servicios de cada sede reportada. Va sobre la colección completa y no
+   * sobre el marco filtrado: una sede con daño puede estar fuera de la selección
+   * por su banda de intensidad y aun así el mapa la dibuja, así que buscarla en
+   * el marco la dejaría sin ficha justo cuando se está mirando.
+   *
+   * Se arma una sola vez, al llegar el archivo. `indiceMarco` no sirve para
+   * esto: ese se rehace con cada filtro. */
+  const porDane = useMemo(() => {
+    const m = new Map<string, Sede>();
+    for (const f of coleccion?.features ?? []) m.set(f.properties.dane, f.properties);
+    return m;
+  }, [coleccion]);
 
   const danesConReporte = useMemo(
     () =>
@@ -470,6 +584,10 @@ export default function Pagina() {
         tema={tema}
         seleccion={seleccion}
         onSeleccion={irASede}
+        resalte={resalte}
+        // Al desplegar las caracteristicas la columna derecha pasa de 240 a
+        // 360 px y tapa la esquina donde viven el zoom y el boton de inicio.
+        controlesIzquierda={caracteristicas}
       />
 
       <PanelIzquierdo
@@ -495,11 +613,24 @@ export default function Pagina() {
         encuestadasPais={ENCUESTADAS_PAIS}
         mapaBase={mapaBase}
         onMapaBase={setMapaBase}
+        danosMarcados={marcadas}
+        porDane={porDane}
+        resalte={resalte}
+        onResalte={setResalte}
+        caracteristicas={caracteristicas}
+        onCaracteristicas={setCaracteristicas}
       />
 
       <div className="pointer-events-none absolute inset-x-2 top-2 z-20 flex flex-col items-stretch gap-2 md:inset-x-auto md:right-0 md:top-0 md:bottom-0 md:items-end md:p-3 md:pb-16">
-        <ControlDerecho
+        <div className={`pointer-events-auto w-full ${anchoDerecha}`}>
+          <ControlDerecho
           resumen={resumenContado}
+          resalte={resalte
+            ? { n: sedesResaltadas.length, etiqueta: resalte.etiqueta }
+            : null}
+          onExportarResalte={resalte
+            ? () => descarga(sedesResaltadas)
+            : null}
           conDano={soloDanos ? resumenDanos.sedes : nConDano}
           // Con la pantalla en modo solo daños el número grande ya es el total
           // de sedes dibujadas con daño, así que no queda ninguna fuera y no hay
@@ -512,16 +643,17 @@ export default function Pagina() {
                              capas.subtipos)
               : sinOcultas(sedesMarco, danesOcultas),
           )}
-        />
+          />
+        </div>
 
         {/* Los daños quedan debajo del conteo, pegados a la cifra de la que
             cuelgan, y con el mismo ancho: la franja derecha ajusta al contenido,
             asi que sin decirle nada cada tarjeta medía lo suyo y la pila
-            quedaba con el borde izquierdo desigual. Los 240 px salen de
-            `md:w-60`, que es lo que mide la del conteo. Desplegada pasa de la
-            pantalla, asi que se desplaza por dentro; sin `min-h-0` un hijo
-            flexible no se deja encoger y el desbordamiento se iria por debajo
-            del borde.
+            quedaba con el borde izquierdo desigual. Por eso las tres comparten
+            `anchoDerecha` y crecen juntas al desplegar las caracteristicas.
+            Desplegada pasa de la pantalla, asi que se desplaza por dentro; sin
+            `min-h-0` un hijo flexible no se deja encoger y el desbordamiento se
+            iria por debajo del borde.
 
             Nada de esto en el telefono, donde la tarjeta sigue viviendo en la
             hoja de abajo: ver el comentario del orden en `PanelIzquierdo`.
@@ -529,7 +661,7 @@ export default function Pagina() {
             Y solo cuando no hay ficha abierta: las dos a la vez en la misma
             columna dejan a cada una en un tercio de la altura. */}
         {!sedeAbierta && (
-          <div className="pointer-events-auto hidden min-h-0 overflow-y-auto overscroll-contain md:block md:w-60">
+          <div className={`pointer-events-auto hidden min-h-0 overflow-y-auto overscroll-contain md:block ${anchoDerecha}`}>
             <TarjetaDanos
               capas={capas}
               onCapas={setCapas}
@@ -541,6 +673,21 @@ export default function Pagina() {
               edicionMen={edicionMen}
               onIrASede={irASede}
             />
+
+            {/* Hermana de la de daños, pegada debajo y con el mismo universo.
+                Metida dentro, la de daños pasaba de mil píxeles de alto y había
+                que recorrer sus tres bloques de fuente para llegar. */}
+            <div className="mt-2">
+              <CaracteristicasAfectadas
+                danos={marcadas}
+                porDane={porDane}
+                resalte={resalte}
+                onResalte={setResalte}
+                abierta={caracteristicas}
+                onAbierta={setCaracteristicas}
+                secretarias={filtros.secretarias}
+              />
+            </div>
           </div>
         )}
 
@@ -561,7 +708,7 @@ export default function Pagina() {
         {/* Debajo de los daños, no entre el conteo y ellos. El mapa base es una
             preferencia y no tiene que partir las dos lecturas de la columna. En
             el teléfono vive en la hoja de abajo, pegado a la misma tarjeta. */}
-        <div className="pointer-events-auto hidden md:block md:w-60">
+        <div className={`pointer-events-auto hidden md:block ${anchoDerecha}`}>
           <TarjetaMapaBase mapaBase={mapaBase} onMapaBase={setMapaBase} />
         </div>
       </div>

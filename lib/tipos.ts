@@ -61,6 +61,46 @@ export type Sede = {
   // mismo que no tener el servicio.
   energia_2024?: boolean;
   internet_2024?: boolean;
+
+  // --- El agua, que llega por dos caminos y no hay que confundirlos ---------
+  //
+  // El C-600 no pregunta por agua en ninguno de sus tres años. Revisados sus
+  // doce ítems de infraestructura y conectividad de 2024, son todos de TIC y de
+  // energía. Así que el agua solo se puede decir de dos formas, y las dos están
+  // aquí porque no dicen lo mismo.
+
+  /** Si la sede declaró al FFIE tener servicio de agua, de la fuente que sea:
+   *  acueducto, pozo, tanque o carrotanque. Habla del colegio, que es lo que uno
+   *  querría saber, pero solo existe para las visitadas entre 2021 y 2022. */
+  agua_ffie?: boolean;
+  /** Si esa agua le llega por la red del acueducto. Se separa de la anterior
+   *  porque una sede con pozo tiene agua sin tener acueducto, y esa distinción
+   *  es la que hace comparable esta declaración con el dato del entorno. */
+  agua_acueducto_ffie?: boolean;
+
+  /** Qué fracción de las viviendas del área censal donde cae la sede tenía
+   *  acueducto en el Censo de 2018, de 0 a 1. Lo calcula
+   *  `scripts/46_entorno_censo.py`.
+   *
+   *  No dice si el colegio tiene agua. Dice en qué clase de territorio está. Es
+   *  la única medida de agua que cubre también a las sedes que nadie visitó, y
+   *  concuerda con la declaración del rector en la dirección correcta: contra
+   *  `agua_acueducto_ffie` la correlación de Spearman es 0,607 y contra
+   *  `agua_ffie` baja a 0,475, que es justo lo que tenía que pasar si mide la
+   *  red del vecindario y no el servicio del colegio.
+   *
+   *  Nulo fuera de los seis departamentos cuyo microdato del censo está
+   *  descargado. Nulo es que no tenemos el archivo, no que allí falte el
+   *  servicio. */
+  acueducto_entorno?: number;
+  alcantarillado_entorno?: number;
+  /** Cuántas viviendas tiene esa área. Va con la cifra porque sin él no se
+   *  puede leer: un 40 % sobre 4 viviendas y un 40 % sobre 300 no valen igual. */
+  viviendas_entorno?: number;
+  /** `manzana` o `seccion`. Es `seccion` cuando el censo no registró ninguna
+   *  vivienda en la manzana de la sede, que suele pasar en manzana
+   *  institucional, y hubo que subir un nivel. */
+  nivel_entorno?: string;
 };
 
 export type RasgoSede = {
@@ -573,6 +613,31 @@ export const EXPLICACION_MMI =
 export const FUENTE_MMI = {
   texto: "Escala de intensidad de Mercalli modificada, USGS",
   url: "https://www.usgs.gov/programs/earthquake-hazards/modified-mercalli-intensity-scale",
+};
+
+/** Un subconjunto de sedes pintado aparte en el mapa, sin recortar nada.
+ *
+ * Es lo que hace un clic en un segmento de la tarjeta de características.
+ * Resaltar y filtrar son dos preguntas distintas y por eso son dos mecanismos
+ * distintos: el filtro decide qué sedes hay en la pantalla y mueve todos los
+ * contadores; el resalte no quita ni una, solo dice cuáles de las que ya están
+ * cumplen la condición. Si el clic filtrara, la única forma de ver dónde están
+ * las rurales sería dejar de ver dónde están las demás, que es justo lo que hace
+ * falta para poder compararlas.
+ *
+ * Viaja como conjunto de códigos DANE y no como una expresión sobre un atributo.
+ * Tiene que ser así: la cobertura de acueducto del entorno no es una propiedad
+ * del punto de daño, y el estado operativo no es una propiedad de la sede. Con
+ * el conjunto ya resuelto en React, las tres clases de fila del panel usan el
+ * mismo mecanismo y el mapa no tiene que saber de dónde salió cada una.
+ */
+export type Resalte = {
+  /** Identifica el segmento encendido, para saber cuál de todas las filas está
+   *  activa sin comparar conjuntos. Es `grupo/clave`. */
+  id: string;
+  /** Cómo se nombra en pantalla lo que está resaltado. */
+  etiqueta: string;
+  danes: Set<string>;
 };
 
 export type Filtros = {

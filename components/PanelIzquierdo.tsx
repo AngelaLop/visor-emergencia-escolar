@@ -16,8 +16,10 @@
 
 import { useRef, useState } from "react";
 
+import CaracteristicasAfectadas from "@/components/CaracteristicasAfectadas";
 import { TarjetaMapaBase } from "@/components/ControlDerecho";
 import { MarcaGitHub } from "@/components/Iconos";
+import { Info, Tarjeta } from "@/components/Piezas";
 import { COLOR_BANDA, COLOR_FUENTE, svgEpicentro } from "@/components/Mapa";
 import type { Capas } from "@/components/Mapa";
 import {
@@ -30,7 +32,9 @@ import {
   TONO_IVID,
   FUENTES_DEL_VISOR,
   danoMarcado,
+  danosMarcados,
   horaLocal,
+  sinRecorteDeBanda,
   miles,
 } from "@/lib/datos";
 import type { Resumen } from "@/lib/datos";
@@ -60,6 +64,8 @@ import type {
   MetaMen,
   RasgoSede,
   Reporte,
+  Resalte,
+  Sede,
   Tema,
 } from "@/lib/tipos";
 
@@ -103,6 +109,18 @@ type Props = {
   encuestadasPais: number;
   mapaBase: MapaBase;
   onMapaBase: (m: MapaBase) => void;
+  /** El universo de la tarjeta de caracteristicas: un reporte por sede, solo los
+   *  que el mapa dibuja. Lo calcula `page.tsx` con `danosMarcados` y lo pasa
+   *  hecho, para que la version de telefono y la de la columna derecha describan
+   *  exactamente las mismas sedes. */
+  danosMarcados: Dano[];
+  /** El directorio por codigo DANE, para mirar la ficha de cada sede reportada.
+   *  En pantalla angosta la tarjeta de caracteristicas se dibuja desde aqui. */
+  porDane: Map<string, Sede>;
+  resalte: Resalte | null;
+  onResalte: (r: Resalte | null) => void;
+  caracteristicas: boolean;
+  onCaracteristicas: (v: boolean) => void;
 };
 
 export default function PanelIzquierdo(p: Props) {
@@ -184,6 +202,20 @@ export default function PanelIzquierdo(p: Props) {
         <TarjetaCapas {...p} />
         <div className="md:hidden">
           <TarjetaDanos {...p} />
+          {/* La de caracteristicas va pegada debajo de la de daños, aqui y en la
+              columna derecha. Son hermanas y comparten universo: la de arriba
+              dice quien reporta que, esta dice que clase de escuelas son. */}
+          <div className="mt-2">
+            <CaracteristicasAfectadas
+              danos={p.danosMarcados}
+              porDane={p.porDane}
+              resalte={p.resalte}
+              onResalte={p.onResalte}
+              abierta={p.caracteristicas}
+              onAbierta={p.onCaracteristicas}
+              secretarias={p.filtros.secretarias}
+            />
+          </div>
           <div className="mt-2">
             <TarjetaMapaBase mapaBase={p.mapaBase} onMapaBase={p.onMapaBase} />
           </div>
@@ -299,14 +331,6 @@ function TarjetaEvento({ evento }: Props) {
  */
 const OFICIALES: EmisorDano[] = ["SE_VALLE", "MEN", "BID"];
 
-/** A partir de que porcentaje declarado se considera que la afectacion es
- *  grave, para el resumen de la secretaria.
- *
- *  Es una decision nuestra y no un umbral normativo, asi que va escrita en
- *  pantalla al lado del numero. De las 520 sedes del Valle que estimaron un
- *  porcentaje, 171 lo declaran en 60 o mas. */
-const UMBRAL_AFECTACION = 60;
-
 /** Las filas del desglose de cada estado, que no son una por subtipo.
  *
  * "sin definir el impacto" y "sin especificar" se fusionan en una sola fila el
@@ -374,12 +398,15 @@ export function TarjetaDanos({
   // Recogida al abrir: la primera pantalla tiene que dejar ver el mapa, y quien
   // llega buscando los reportes los despliega de un clic.
   const [abierta, setAbierta] = useState(false);
-  // Abre con el desglose de "Con daño". Es la casilla mas poblada de la
-  // pantalla, mil y pico sedes, y sin abrirla el numero grande no dice si son
-  // grietas o muros partidos. El de colapso queda plegado: son 196 sedes y su
-  // desglose importa para decidir a donde ir primero, pero con los dos abiertos
-  // la tarjeta arranca con ocho pastillas finas debajo de cuatro gruesas.
-  const [desglosado, setDesglosado] = useState<EstadoDano | null>("dano");
+  // Los dos desgloses arrancan plegados.
+  //
+  // "Con daño" abria desplegado, con el argumento de que es la casilla mas
+  // poblada y su numero grande no dice si son grietas o muros partidos. Sigue
+  // siendo verdad, pero desde que la tarjeta de caracteristicas cuelga debajo la
+  // cuenta cambio: la columna derecha tiene que dejar ver las cuatro casillas de
+  // estado y el encabezado de la tarjeta de abajo sin desplazarse, y cuatro
+  // pastillas finas de mas lo impedian. El desglose sigue a un clic.
+  const [desglosado, setDesglosado] = useState<EstadoDano | null>(null);
   // "si" sin tilde es el valor que guarda el CSV de curaduria: es un codigo,
   // no prosa, y cambiarlo romperia las filas ya revisadas.
   const pendientes = reportes.filter((r) => !r.es_escuela.trim());
@@ -542,7 +569,11 @@ export function TarjetaDanos({
   // Mira tambien el desglose, no solo el estado. Con "con daño" marcada y de sus
   // cuatro desgloses solo "riesgo inminente", el mapa dibuja 184 puntos y el
   // encabezado decia 1.595.
-  const marcadas = peores.filter(dibujado);
+  // La misma funcion que usa `page.tsx` para armar el universo de la tarjeta de
+  // caracteristicas. Las dos tienen que decir el mismo numero, y con una sola
+  // regla no hay forma de que se separen.
+  const marcadas = danosMarcados(danosDibujados, capas.estadosDano,
+                                 capas.subtipos);
   const sedesConReporte = marcadas.length;
   // Sin recortar, que es contra lo que se mide cuanto se esta dejando fuera.
   const peoresTodos = peorPorSede(danos);
@@ -619,7 +650,12 @@ export function TarjetaDanos({
   // La banda nula es otra cosa y va contada aparte en la nota: son las cinco
   // sedes que caen fuera de la grilla del ShakeMap del USGS, donde no hay
   // intensidad estimada de ningun valor.
-  const fueraDeBanda = peoresTodos.filter(
+  //
+  // Cero cuando el recorte no esta recortando: sin ninguna banda encendida, o
+  // con una secretaria elegida, el mapa dibuja todos los puntos a plena tinta y
+  // esta casilla ofreceria destapar unos puntos atenuados que no existen. Es la
+  // misma regla que usa el mapa para no atenuar, y por eso vive en un solo sitio.
+  const fueraDeBanda = sinRecorteDeBanda(filtros) ? 0 : peoresTodos.filter(
     (d) => dibujado(d)
       && (d.banda == null || !filtros.bandas.includes(d.banda)),
   ).length;
@@ -951,6 +987,7 @@ export function TarjetaDanos({
           )}
         </div>
       )}
+
     </Tarjeta>
   );
 }
@@ -1302,37 +1339,6 @@ function FilaDano({
   );
 }
 
-/** Una linea del resumen de la secretaria: la cifra, sobre cuantas, y que
- *  significa.
- *
- * El denominador se repite en cada linea a proposito. Las dos preguntas no
- * tienen el mismo numero de respuestas, porque no las contestaron las mismas
- * sedes, y una sola nota al pie no lo diria.
- *
- * Antes habia una variante en verde, para la cifra de las sedes con concepto
- * tecnico. Se fue con ese recuadro: las dos lineas que quedan son las dos malas,
- * y un color condicional que nunca se usa es una rama que hay que mantener sin
- * que nadie la vea.
- */
-function Operativa({ n, total, texto }: {
-  n: number;
-  total: number;
-  texto: string;
-}) {
-  if (!total) return null;
-  return (
-    <div className="flex items-baseline gap-1.5">
-      <span className="num font-semibold" style={{ color: "var(--critico)" }}>
-        {miles(n)}
-      </span>
-      <span className="flex-1">{texto}</span>
-      <span className="num text-[10px]" style={{ color: "var(--tinta-3)" }}>
-        {total ? Math.round((n / total) * 100) : 0}%
-      </span>
-    </div>
-  );
-}
-
 function Insignia({ estado, color }: { estado: EstadoDano; color: string }) {
   const hueco = estado === "sin_dano" || estado === "sin_verificar";
   return (
@@ -1378,57 +1384,6 @@ function TarjetaCapas({
     lista.includes(v) ? lista.filter((x) => x !== v) : [...lista, v];
 
   const conSecretaria = filtros.secretarias.length > 0;
-
-  /** Lo que la Secretaría declara sobre la operación de sus escuelas.
-   *
-   * Vive aquí y no en la tarjeta de daños porque no es una pregunta sobre el
-   * edificio sino sobre la entidad: si la escuela está dando clase. Solo
-   * aparece con una secretaría elegida, que es cuando la pregunta tiene un
-   * sujeto, y hoy solo la del Valle la contesta.
-   *
-   * Se cuenta sobre los mismos reportes que la capa de daños está dibujando: el
-   * recorte de intensidad y las casillas de estado, para que este número no
-   * diga una cosa mientras el mapa dibuja otra. `danos` ya llega recortado por
-   * la secretaría elegida, así que aquí no hay que volver a filtrarlo.
-   *
-   * `presta_servicio === false` y nunca por descarte. Hay sedes que dejaron la
-   * casilla en blanco, y contarlas como "no" convertiría una pregunta sin
-   * responder en una respuesta.
-   */
-  const enBandaDibujada = (d: Dano) =>
-    capas.danosTodasLasBandas
-    || (d.banda != null && filtros.bandas.includes(d.banda));
-  const conDanoMarcado = [...reportePorSede(danos.filter(enBandaDibujada))
-    .values()].filter(
-      (d) => danoMarcado(d, capas.estadosDano, capas.subtipos));
-  const declaranOperacion = conDanoMarcado.filter(
-    (d) => d.presta_servicio !== undefined);
-  const nSinClase = declaranOperacion.filter(
-    (d) => d.presta_servicio === false).length;
-
-  /** Las sedes muy afectadas que además piden que las muevan.
-   *
-   * El umbral del 60% no sale de una norma, lo pusimos aquí para separar la
-   * afectación grave del resto, y por eso el número va escrito en pantalla en
-   * vez de esconderse detrás de la palabra "grave".
-   *
-   * El porcentaje lo estimó quien llenó el formulario y no un ingeniero, así que
-   * no es una medida: es la severidad que declara la sede. Cruzarlo con la
-   * casilla de reubicación temporal es lo que lo vuelve útil, porque son dos
-   * respuestas independientes que apuntan a lo mismo, y cuando coinciden ya no
-   * es una impresión de una sola casilla.
-   *
-   * El denominador son las que pasan el umbral y además contestaron si requieren
-   * reubicación. Las que no contestaron ninguna de las dos no entran, ni arriba
-   * ni abajo de la fracción.
-   */
-  const muyAfectadas = conDanoMarcado.filter(
-    (d) => d.pct_afectacion != null && d.pct_afectacion >= UMBRAL_AFECTACION);
-  const decidenReubicacion = muyAfectadas.filter(
-    (d) => d.requiere_reubicacion !== undefined
-      && d.requiere_reubicacion !== null);
-  const nPidenReubicacion = muyAfectadas.filter(
-    (d) => d.requiere_reubicacion === true).length;
 
   /** Elegir una secretaria cambia a que pregunta responde la pantalla.
    *
@@ -1534,81 +1489,6 @@ function TarjetaCapas({
                 onAlternar={eligeSecretaria}
                 onLimpiar={limpiaSecretarias}
               />
-
-              {conSecretaria && (
-                <div
-                  className="mt-2 rounded border px-2.5 py-2 text-[11px] leading-relaxed"
-                  style={{
-                    borderColor: "var(--linea)",
-                    color: "var(--tinta-2)",
-                  }}
-                >
-                  {declaranOperacion.length > 0 ? (
-                    <>
-                      {/* El denominador va escrito. Sin el, "462 no estan
-                          prestando servicio" se lee como una cifra del mapa
-                          entero cuando es de las sedes con dano de esta
-                          entidad que ademas contestaron la pregunta. */}
-                      <div className="mb-1" style={{ color: "var(--tinta-3)" }}>
-                        <span className="num">
-                          {miles(declaranOperacion.length)}
-                        </span>{" "}
-                        de las{" "}
-                        <span className="num">
-                          {miles(conDanoMarcado.length)}
-                        </span>{" "}
-                        sedes con daño en pantalla declaran si están dando
-                        clase.
-                      </div>
-                      <Operativa
-                        n={nSinClase}
-                        total={declaranOperacion.length}
-                        texto="no están dando clase presencial"
-                      />
-                      {/* La segunda cifra cruza dos casillas distintas del
-                          formulario, y por eso dice las dos en el rotulo. El
-                          umbral va escrito porque lo pusimos nosotros: no hay
-                          norma que diga que el 60% es la frontera de lo grave.
-
-                          Solo aparece cuando alguna sede de la seleccion pasa
-                          el umbral y contesto la casilla de reubicacion. Sin
-                          esa condicion, en una secretaria sin diagnostico se
-                          leia "0 de 0 piden reubicacion", que suena a que
-                          ninguna la necesita cuando lo que pasa es que nadie
-                          pregunto. */}
-                      {decidenReubicacion.length > 0 && (
-                        <div
-                          className="mt-1.5 border-t pt-1.5"
-                          style={{ borderColor: "var(--linea)" }}
-                        >
-                          <div
-                            className="mb-1"
-                            style={{ color: "var(--tinta-3)" }}
-                          >
-                            <span className="num">
-                              {miles(muyAfectadas.length)}
-                            </span>{" "}
-                            declaran una afectación de{" "}
-                            <span className="num">{UMBRAL_AFECTACION}%</span> o
-                            más de la sede.
-                          </div>
-                          <Operativa
-                            n={nPidenReubicacion}
-                            total={decidenReubicacion.length}
-                            texto="de esas piden reubicación temporal"
-                          />
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <span style={{ color: "var(--tinta-3)" }}>
-                      Esta entidad no declara si sus sedes están dando clase. La
-                      Secretaría del Valle es la única que hasta hoy lo reporta,
-                      con corte al 16 de agosto.
-                    </span>
-                  )}
-                </div>
-              )}
             </div>
           )}
 
@@ -2373,29 +2253,6 @@ function TarjetaCaracteristicas({
 
 // ------------------------------------------------------------- piezas --
 
-function Tarjeta({
-  children,
-  estilo,
-}: {
-  children: React.ReactNode;
-  /** Permite redefinir variables de color para una tarjeta sola. Se usa para
-   *  cambiar el acento sin tocar el de las demas, que comparten componentes. */
-  estilo?: React.CSSProperties;
-}) {
-  return (
-    <section
-      className="rounded-lg border shadow-md"
-      style={{
-        background: "var(--superficie)",
-        borderColor: "var(--borde)",
-        ...estilo,
-      }}
-    >
-      {children}
-    </section>
-  );
-}
-
 function Encabezado({
   titulo,
   abierta,
@@ -2673,132 +2530,6 @@ function Mini({ n, matricula, texto }: { n: number; matricula: number; texto: st
         {miles(matricula)} estudiantes
       </div>
     </div>
-  );
-}
-
-/** Un botón de información, que despliega su texto al pasar por encima.
- *
- * La explicación vive detrás del botón y no en la tarjeta porque es una nota al
- * pie: quien ya sabe por qué el epicentro no es el punto más sacudido no
- * necesita leerla cada vez que abre el visor.
- *
- * La nota se posiciona con coordenadas medidas del botón y no con `absolute`
- * dentro de la tarjeta. La columna de tarjetas tiene desplazamiento vertical, y
- * eso recorta cualquier cosa que se salga de sus 360 px: la nota aparecía
- * cortada por la mitad.
- */
-function Info({
-  texto,
-  fuente,
-  tono,
-  ancho,
-}: {
-  texto: string;
-  fuente?: { texto: string; url: string };
-  /** Color del boton. Por defecto es el gris de nota al pie. Solo lo cambia el
-   *  boton del titulo, que no explica un dato sino la plataforma entera. */
-  tono?: string;
-  /** Caja mas ancha y con parrafos. La usa la ficha tecnica del indice, que no
-   *  es una nota al pie sino la definicion completa de como se construyo. */
-  ancho?: boolean;
-}) {
-  // Dos estados y no uno: el clic deja la nota fija y el puntero solo la asoma.
-  // Con una sola bandera, mover el mouse encima para hacer clic la abría y el
-  // clic la volvía a cerrar en el mismo gesto.
-  const [encima, setEncima] = useState(false);
-  const [fijado, setFijado] = useState(false);
-  const [caja, setCaja] = useState<
-    { top: number; left: number; alto: number } | null
-  >(null);
-  const boton = useRef<HTMLButtonElement>(null);
-  const abierto = encima || fijado;
-
-  /** Coloca la nota dentro de la ventana, por los cuatro lados.
-   *
-   * Antes solo se cuidaba el borde derecho y la ficha tecnica, que es larga, se
-   * salia por abajo: la caja se desplaza sola por dentro, pero la parte que
-   * quedaba fuera de la pantalla no habia forma de alcanzarla. Ahora se calcula
-   * el alto disponible y, si debajo del boton no cabe, la caja sube.
-   */
-  function ubica() {
-    const r = boton.current?.getBoundingClientRect();
-    if (!r) return;
-    const MARGEN = 8;
-    const w = ancho ? 384 : 288;
-    const izq = Math.min(
-      Math.max(MARGEN, r.left - 120),
-      window.innerWidth - w - MARGEN,
-    );
-    const alto = Math.min(
-      ancho ? 520 : 360,
-      window.innerHeight - MARGEN * 2,
-    );
-    let top = r.bottom + 6;
-    if (top + alto > window.innerHeight - MARGEN) {
-      top = Math.max(MARGEN, window.innerHeight - alto - MARGEN);
-    }
-    setCaja({ top, left: Math.max(MARGEN, izq), alto });
-  }
-
-  return (
-    <span className="ml-1 inline-block align-middle">
-      <button
-        ref={boton}
-        onMouseEnter={() => {
-          ubica();
-          setEncima(true);
-        }}
-        onMouseLeave={() => setEncima(false)}
-        onClick={() => {
-          ubica();
-          setFijado(!fijado);
-        }}
-        aria-label="Qué significa esto"
-        className="rounded-full border px-1.5 text-[9px] leading-4"
-        style={{
-          borderColor: tono ?? "var(--linea)",
-          color: tono ?? "var(--tinta-3)",
-        }}
-      >
-        i
-      </button>
-      {abierto && caja && (
-        <span
-          className={
-            "fixed z-50 block rounded border px-3 py-2 text-[11px] leading-relaxed shadow-lg " +
-            (ancho ? "w-96 overflow-y-auto whitespace-pre-line" : "w-72")
-          }
-          style={{
-            top: caja.top,
-            left: caja.left,
-            // El alto lo decide `ubica` con la ventana en la mano, no una
-            // fraccion fija: con `70vh` la caja cabia en la pantalla pero
-            // empezaba tan abajo que su final quedaba fuera.
-            maxHeight: ancho ? caja.alto : undefined,
-            background: "var(--superficie)",
-            borderColor: "var(--borde)",
-            color: "var(--tinta-2)",
-            fontWeight: 400,
-          }}
-        >
-          {texto}
-          {fuente && (
-            <>
-              {" "}
-              <a
-                href={fuente.url}
-                target="_blank"
-                rel="noreferrer"
-                className="underline"
-              >
-                {fuente.texto}
-              </a>
-              .
-            </>
-          )}
-        </span>
-      )}
-    </span>
   );
 }
 

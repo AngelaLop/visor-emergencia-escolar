@@ -738,6 +738,77 @@ export function sinOcultas(
   return rasgos.filter((f) => !ocultas.has(f.properties.dane));
 }
 
+/** Cuándo el recorte de intensidad no está recortando nada.
+ *
+ * Dos casos y los dos terminan igual: no hay un "dentro" contra el que
+ * contrastar, así que ningún punto de daño puede dibujarse como "fuera".
+ *
+ * Con una secretaría elegida, porque allí la banda solo pinta y no reparte: lo
+ * decide `pasa`, unas líneas más abajo en este mismo archivo.
+ *
+ * Y con ninguna banda encendida, porque "fuera del recorte" solo significa algo
+ * cuando hay un dentro. Elegir una secretaría vacía las bandas a propósito, así
+ * que este caso es el de todos los días.
+ *
+ * Vive aquí y no en el mapa porque lo preguntan dos sitios que tienen que decir
+ * lo mismo: el mapa, para no atenuar, y la tarjeta de daños, para no ofrecer una
+ * casilla que dice que hay puntos atenuados cuando no los hay. Escrita dos veces
+ * se separaría, que es la forma en que este visor ya se ha contradicho antes.
+ */
+export function sinRecorteDeBanda(f: Filtros): boolean {
+  return f.secretarias.length > 0 || f.bandas.length === 0;
+}
+
+/** Si algún filtro está preguntando por un atributo de la sede.
+ *
+ * Zona, vigencia, PTIES, vulnerabilidad, quintil, matrícula, y los de las dos
+ * pestañas de características. La banda y la secretaría no cuentan: la primera
+ * es el recorte de intensidad y la segunda el de jurisdicción, y ninguna de las
+ * dos es una propiedad que se le pregunte a la escuela.
+ *
+ * Existe para decidir si entran al conteo las sedes con reporte que no están en
+ * el marco. Esas llegan del archivo de daños con nombre, municipio y matrícula y
+ * nada más: no tienen zona, ni quintil, ni C-600. Mientras nadie pregunte por un
+ * atributo se pueden contar sin afirmar nada de ellas; en cuanto alguien filtra
+ * por zona, no hay forma honesta de decir si pasan el filtro, y quedan fuera por
+ * la misma regla con la que `pasa` deja fuera a una sede sin quintil cuando se
+ * elige un quintil.
+ */
+export function pideAtributos(f: Filtros): boolean {
+  return f.zonas.length > 0
+    || f.vigencias.length > 0
+    || f.pties.length > 0
+    || f.ividCategorias.length > 0
+    || f.quintiles.length > 0
+    || f.matriculaMin > 0
+    || (f.tab === "fisica" && f.fisica !== "todas")
+    || (f.tab === "servicios"
+      && (f.energia !== "todas" || f.internet !== "todas"));
+}
+
+/** Los reportes que el mapa está dibujando: uno por sede, el que gana por
+ *  precedencia, y solo si su estado y su subtipo están marcados.
+ *
+ * Existe para que la tarjeta de daños y la de características no cuenten cada
+ * una por su lado. Son la misma lista: el número del encabezado de la primera es
+ * el universo entero de la segunda, y si se calcularan aparte volveríamos a tener
+ * dos reglas para la misma pregunta, que es exactamente el error que este visor
+ * ya cometió cuatro veces.
+ *
+ * No mira la coordenada. Es a propósito y lo separa de `cuentaDanosMarcados`,
+ * que sí: aquélla contesta cuántos puntos hay en el mapa, ésta contesta de qué
+ * sedes estamos hablando. Una sede reportada sin coordenada sigue siendo una
+ * sede reportada.
+ */
+export function danosMarcados(
+  danos: Dano[],
+  estados: EstadoDano[],
+  subtipos: string[],
+): Dano[] {
+  return [...reportePorSede(danos).values()]
+    .filter((d) => danoMarcado(d, estados, subtipos));
+}
+
 /** Cuántos daños pintados están marcados y tienen coordenada.
  *
  * Un ganador por sede, la misma regla que `sedesConDano`, sin armar los
@@ -782,6 +853,11 @@ export const CALIDAD_COORD: Record<string, string> = {
   geocoded_street: "geocodificada a partir de la dirección",
   geocoded_centroid: "centroide del municipio",
   boundary_zone: "sobre un límite administrativo",
+  // No es una verificación en terreno y por eso no dice "verificada". Es que la
+  // del directorio caía fuera del municipio de la propia sede y la capa del MEN
+  // publica otra que sí cae dentro. La lista de cuáles y por qué está en
+  // `COORDENADAS_CORREGIDAS`, en `scripts/20_base_maestra.py`.
+  corregida_men: "corregida con la coordenada de la capa del MEN",
 };
 
 export function diceCalidad(c?: string): string {
@@ -878,21 +954,34 @@ export function horaLocal(isoUtc: string): string {
  * cambian allí hay que cambiarlos aquí, que es la deuda conocida de tener la
  * cifra escrita en prosa.
  */
-export const FUENTES_DEL_VISOR = `Este visor cruza tres cosas: dónde sacudió el sismo del 10 de agosto de 2026, qué se ha reportado desde entonces y cómo estaba cada escuela antes. Ninguna sede tiene inspección técnica. Todo lo que se ve es declarado o estimado.
+export const FUENTES_DEL_VISOR = `Este visor permite identificar espacialmente y obtener información actualizada de las escuelas afectadas por el sismo del 10 de agosto de 2026 en Colombia. Combina información de reportes oficiales del MEN, secretarías de educación y noticias con registros administrativos para permitir la caracterización de las escuelas. Ninguna de las 26.591 sedes que dibuja tiene inspección técnica confirmada. Todo lo que se ve es declarado por alguien o estimado por un modelo, y cada punto dice quién lo afirma.
+
+CÓMO SE USA
+Elija una secretaría: recorta las sedes, los daños y las cuentas de la derecha. Las casillas de daño deciden qué se dibuja, y su número cuenta exactamente los puntos del mapa.
+La tarjeta de características describe las sedes con daño dibujadas, no la selección de la pantalla. Al tocar un tramo se resalta en el mapa, recorta el bloque de "cómo están hoy" y se puede bajar en CSV.
+
+CÓMO LEERLO
+Una sede sin reporte no es una sede sin daño: nadie ha dicho nada de ella. La cobertura de las fuentes es muy desigual entre territorios.
+La intensidad (MMI) es sacudida estimada por un modelo, no daño observado.
+Un tramo gris siempre significa "no sabemos", nunca "no tiene".
+Lo de "cómo están hoy" describe un momento, no una condición permanente.
+
+QUIÉN REPORTA EL DAÑO — 1.791 sedes
+Secretaría de Educación del Valle del Cauca. 570 sedes, corte al 16 de agosto. Consolidado de lo que declararon sus rectores, y única fuente que dice si la escuela está dando clase, qué porcentaje está afectado y qué pide. Manda sobre el MEN en sus sedes. Su archivo no trae código DANE: el emparejamiento lo hicimos nosotros y cada ficha dice con qué regla.
+MEN. 1.705 sedes, corte al 15 de agosto. Declara estado en 1.813 de las 52.611 sedes de su universo priorizado, desde un formulario que el propio Ministerio declara no exhaustivo.
+BID. 16 sedes. Reporte del equipo PTIES, corte al 10 de agosto.
+Prensa. 178 sedes. Declaración de una autoridad, con nombre, cargo, fecha y cita textual.
+ChatMap (HOT). 1 sede. Foto ciudadana emparejada con la sede; no afirma nada del edificio.
 
 DÓNDE SACUDIÓ
-ShakeMap del USGS. Un modelo calcula la fuerza del temblor en cada punto, según la distancia y el tipo de suelo. Se apoyó en 2 estaciones y 239 reportes de personas para todo el país. Es una estimación de la zona, no una medición en la escuela, y no dice si la escuela se dañó.
+ShakeMap del USGS. Sismo de magnitud 7,4 a 5 km al este de San José del Palmar, calibrado con 2 estaciones sismológicas y 239 reportes de personas para todo el país. Es una estimación de la zona, no una medición en la escuela.
 
-QUÉ SE HA REPORTADO
-MEN. Capa pública del Ministerio. Sale de una encuesta a rectores que no es exhaustiva: 1.184 sedes con estado, de 9.273 en seis departamentos. Una sede sin reporte no es una sede sin daño.
-BID. Reporte del equipo PTIES, con corte al 10 de agosto.
-Prensa. Lo que declaró una autoridad, con su nombre, su cargo y su cita.
-ChatMap (HOT). Fotos que envía la gente por WhatsApp. Que esté confirmada quiere decir que alguien la emparejó con la sede, no que la sede esté dañada.
-
-CÓMO ESTABA ANTES
-Encuesta del FFIE. El rector declaró el estado de techos, muros y pisos, y quedaron fotos de campo. Es anterior al sismo.
-C-600 del DANE, 2024. Energía, internet, matrícula y si la sede sigue abierta.
-SIMAT 2022. El directorio de las 52.823 sedes del país, con su coordenada.
-CIMA. Dice cuáles coordenadas están verificadas.
-Open Buildings de Google. La huella del edificio.
-Índice de riqueza de Meta. El entorno de la escuela, en quintiles.`
+REGISTROS ADMINISTRATIVOS, TODOS ANTERIORES AL SISMO
+SIMAT 2022. El directorio de las 52.823 sedes oficiales del país, con zona, matrícula y coordenada. Es el marco: todo lo demás se pega encima.
+CIMA. Control de calidad de la coordenada: cuáles están verificadas y cuáles caen en otro municipio.
+C-600 del DANE, 2024. Energía, internet, matrícula y si la sede sigue operando. 25.425 sedes. No pregunta por agua en ninguno de sus años.
+Encuesta del FFIE, 2021 y 2022. Estado declarado por el rector de techos, muros y pisos, si hay agua y de dónde llega, y fotos de campo. 8.070 sedes.
+Censo de Población y Vivienda 2018 del DANE. Acueducto y alcantarillado de las viviendas del área censal donde cae la sede, no del colegio; el área mediana tiene 66 viviendas. 5.278 sedes, en los seis departamentos con microdato descargado.
+Índice de riqueza relativa de Meta. Quintiles nacionales del entorno, desde una grilla de 2,4 km. 21.346 sedes.
+Open Buildings de Google. La huella del edificio, desde el zoom 15.
+geoBoundaries 2020. El límite de los municipios de cada secretaría. Punteado porque es una referencia de hasta dónde mirar, no una frontera legal.`;
