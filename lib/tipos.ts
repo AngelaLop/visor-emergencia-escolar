@@ -688,7 +688,11 @@ export const FILTROS_INICIALES: Filtros = {
   ividCategorias: [],
   secretarias: [],
   quintiles: [],
-  matriculaMin: 0,
+  // Tres alumnos. Es un corte de ruido de registro y no una pregunta
+  // analitica: en el marco hay 318 sedes con dos alumnos o menos, y de las
+  // 2.054 con dano afirmado solo 9 caen por debajo, ninguna en colapso. Con el
+  // deslizador en cero vuelven todas.
+  matriculaMin: 3,
   tab: "fisica",
   // Todas de un color mientras nadie pregunte nada: el mapa no debe empezar
   // afirmando una distincion que el usuario no pidio.

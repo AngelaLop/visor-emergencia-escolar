@@ -20,6 +20,7 @@ import type { Capas } from "@/components/Mapa";
 import PanelIzquierdo, { TarjetaDanos } from "@/components/PanelIzquierdo";
 import { descarga } from "@/lib/csv";
 import {
+  alumnos,
   cargaBordeGrilla,
   cargaColombia,
   cargaContornos,
@@ -295,7 +296,15 @@ export default function Pagina() {
     if (!sinRecorteDeBanda(filtros) || pideAtributos(filtros)) return VACIAS;
     return sedesConDano(coleccion, danosPintados, capas.estadosDano,
                         capas.subtipos)
-      .filter((f) => !coleccionTiene.has(f.properties.dane));
+      .filter((f) => !coleccionTiene.has(f.properties.dane))
+      // Los dos atributos que estas sedes si traen, en el propio reporte de
+      // daño, y que por eso no estan en `pideAtributos`: la entidad que
+      // responde por ellas y su matricula. Sin el primero, elegir una
+      // secretaria le sumaba a su cuenta las sedes fuera del marco de todo el
+      // pais: con el Valle en pantalla se contaban las de Choco y Manizales.
+      .filter((f) => filtros.secretarias.length === 0
+        || filtros.secretarias.includes(f.properties.secretaria ?? ""))
+      .filter((f) => alumnos(f.properties) >= filtros.matriculaMin);
   }, [filtros, coleccion, coleccionTiene, danosPintados, capas.estadosDano,
       capas.subtipos]);
 
@@ -323,16 +332,63 @@ export default function Pagina() {
    * filtros, mientras en el mapa lo único visible eran los puntos de daño.
    */
   const soloDanos = capas.reportes && !capas.sedes;
-  // Solo cuando la pantalla muestra únicamente daños. Armar los rasgos recorre
-  // las 52 mil sedes del marco para resolver ficha y matrícula, y no hace
-  // falta en cada clic de subtipo.
-  const rasgosConDano = useMemo(
-    () => soloDanos
-      ? sedesConDano(coleccion, danosPintados, capas.estadosDano,
-                     capas.subtipos)
-      : VACIAS,
-    [soloDanos, coleccion, danosPintados, capas.estadosDano, capas.subtipos],
-  );
+  /** Las sedes con daño que además pasan los filtros de la izquierda.
+   *
+   * Se cruza contra `sedesMarco` y no se arma por separado. Armado aparte, que
+   * es como estaba, la pantalla de solo daños ignoraba el panel izquierdo
+   * entero: elegir una secretaría, una zona o una matrícula mínima recortaba el
+   * mapa y dejaba el contador de la derecha diciendo el total del país. Los dos
+   * decían cosas distintas del mismo recorte.
+   *
+   * Cruzar contra el marco hereda gratis las reglas que ya estaban pensadas
+   * ahí: el recorte de banda con su excepción para las sedes reportadas, la de
+   * dejar fuera a las que no están en el marco en cuanto alguien filtra por un
+   * atributo que ellas no tienen, y las ocultas de la curaduría, que hasta hoy
+   * esta pantalla tampoco descontaba.
+   *
+   * Solo cuando la pantalla muestra únicamente daños. Armar los rasgos recorre
+   * las 52 mil sedes del marco para resolver ficha y matrícula, y no hace falta
+   * en cada clic de subtipo.
+   */
+  const rasgosConDano = useMemo(() => {
+    if (!soloDanos) return VACIAS;
+    const conDano = new Set(
+      sedesConDano(coleccion, danosPintados, capas.estadosDano, capas.subtipos)
+        .map((f) => f.properties.dane),
+    );
+    return sinOcultas(sedesMarco, danesOcultas)
+      .filter((f) => conDano.has(f.properties.dane));
+  }, [soloDanos, coleccion, danosPintados, capas.estadosDano, capas.subtipos,
+      sedesMarco, danesOcultas]);
+  /** Las sedes con daño que no se pueden dibujar porque nadie tiene su punto.
+   *
+   * No es que estén filtradas: es que ninguna de nuestras fuentes sabe dónde
+   * quedan, ni el SIMAT de 2022, ni el directorio del MEN de 2026, ni la propia
+   * capa del Ministerio. Sin coordenada no hay punto que pintar, así que no
+   * están en el mapa y tampoco en el número grande.
+   *
+   * Se cuentan aparte y se dicen en pantalla porque callarlas convierte el
+   * contador en una afirmación falsa: quien lo lee entiende "estas son todas",
+   * y no lo son. Son pocas y pesan: hoy dos de ellas declaran colapso.
+   *
+   * Respetan el desglose de estados y subtipos, igual que el contador, para que
+   * el aviso hable siempre del mismo recorte que el número al que acompaña.
+   */
+  const sinCoordenada = useMemo(() => {
+    const vistas = new Set<string>();
+    let sedes = 0;
+    let matricula = 0;
+    for (const d of danosPintados) {
+      if (d.lon != null && d.lat != null) continue;
+      if (!danoMarcado(d, capas.estadosDano, capas.subtipos)) continue;
+      if (vistas.has(d.dane)) continue;
+      vistas.add(d.dane);
+      sedes += 1;
+      matricula += d.matricula ?? 0;
+    }
+    return { sedes, matricula };
+  }, [danosPintados, capas.estadosDano, capas.subtipos]);
+
   const resumenDanos = useMemo(
     () => (soloDanos ? resume(rasgosConDano) : VACIO),
     [soloDanos, rasgosConDano],
@@ -637,6 +693,7 @@ export default function Pagina() {
           onExportarResalte={resalte
             ? () => descarga(sedesResaltadas)
             : null}
+          sinCoordenada={sinCoordenada}
           conDano={soloDanos ? resumenDanos.sedes : nConDano}
           // Con la pantalla en modo solo daños el número grande ya es el total
           // de sedes dibujadas con daño, así que no queda ninguna fuera y no hay

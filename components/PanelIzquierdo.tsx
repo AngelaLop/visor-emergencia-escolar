@@ -952,7 +952,7 @@ export function TarjetaDanos({
             // no hay dónde leer por qué. Son las sedes que reportan los dos, y
             // en la tarjeta se cuentan una sola vez.
             solape={sedesEnAmbosOficiales}
-            nota="Tres emisores, y se pueden apagar uno a uno. La Secretaría del Valle consolidó lo que declararon sus rectores con corte al 16 de agosto, y manda sobre el MEN cuando las dos hablan de la misma sede: es la entidad que responde por esas escuelas. Su archivo no trae código DANE, así que el emparejamiento con el directorio lo hicimos nosotros y cada sede dice en su ficha con qué regla. El MEN publica una capa con el estado físico sede por sede y el código ya puesto; ese estado sale de una encuesta a rectores que no es exhaustiva, así que una sede sin reporte no es una sede sin daño. El BID aporta el reporte del equipo PTIES con corte al 10 de agosto."
+            nota="Tres emisores, y se pueden apagar uno a uno. La Secretaría del Valle consolidó lo que declararon sus rectores con corte al 22 de agosto, más unas pocas sedes que solo aparecían en el corte del 16 y que el nuevo dejó de mencionar: que una fuente deje de listar una sede no es que la sede esté bien. Manda sobre el MEN cuando las dos hablan de la misma sede: es la entidad que responde por esas escuelas. Su archivo no trae código DANE, así que el emparejamiento con el directorio lo hicimos nosotros y cada sede dice en su ficha con qué regla. El MEN publica una capa con el estado físico sede por sede y el código ya puesto; ese estado sale de una encuesta a rectores que no es exhaustiva, así que una sede sin reporte no es una sede sin daño. El BID aporta el reporte del equipo PTIES con corte al 10 de agosto."
             pie={<PieMen meta={metaMen} edicion={edicionMen} />}
             vacio="Todavía no hay ningún reporte oficial cargado."
           />
@@ -1720,11 +1720,14 @@ function BloqueFiltros({
                   Matrícula mínima:{" "}
                   <span className="num">{miles(filtros.matriculaMin)}</span>
                 </div>
+                {/* Paso de uno. Con paso de 25 el arranque, que son 3, no
+                    estaba en ninguna posicion del deslizador: moverlo una vez
+                    dejaba ese valor fuera de alcance para siempre. */}
                 <input
                   type="range"
                   min={0}
                   max={1000}
-                  step={25}
+                  step={1}
                   value={filtros.matriculaMin}
                   onChange={(e) => set({ matriculaMin: Number(e.target.value) })}
                   className="w-full"

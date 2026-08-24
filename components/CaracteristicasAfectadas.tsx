@@ -203,10 +203,17 @@ const NOTA_ENTORNO =
 
 const NOTA_HOY =
   "Lo declara la secretaría que responde por la sede, y hasta hoy solo lo reporta "
-  + "la del Valle del Cauca, con corte al 16 de agosto. Cada línea lleva su propio "
-  + "denominador porque son casillas distintas del formulario y no todas las sedes "
-  + "contestaron las mismas. Una casilla en blanco no cuenta como \"no\": sería "
-  + "convertir una pregunta sin responder en una respuesta.";
+  + "la del Valle del Cauca. El corte es del 22 de agosto, con unas pocas sedes que "
+  + "vienen del corte del 16 porque el nuevo dejó de mencionarlas: que una fuente "
+  + "deje de listar una sede no es que la sede esté bien. Cada línea lleva su "
+  + "propio denominador porque son casillas distintas del formulario y no todas "
+  + "las sedes contestaron las mismas. Una casilla en blanco no cuenta como "
+  + "\"no\": sería convertir una pregunta sin responder en una respuesta. "
+  + "Los totales quedan por debajo de los del tablero de la Secretaría, y la "
+  + "razón es una sola: aquí solo entran las sedes que se pudieron identificar "
+  + "con su código DANE. El diagnóstico no lo trae, así que 34 filas se quedan "
+  + "fuera de estas cuentas y se le devuelven a la Secretaría para que las "
+  + "complete.";
 
 export default function CaracteristicasAfectadas({
   danos,

@@ -418,7 +418,7 @@ function Declaracion({ dano: d }: { dano: Dano }) {
 
           Sin visita técnica no es lo mismo que sin concepto técnico disponible,
           y por eso la pastilla dice lo que dijo la casilla. Nulo no pinta nada:
-          38 de las 570 sedes del Valle dejaron esto en blanco, y una pastilla
+          119 de las 903 sedes del Valle dejaron esto en blanco, y una pastilla
           que dijera "no" ahí convertiría una pregunta sin responder en una
           respuesta. */}
       <Operativas d={d} />

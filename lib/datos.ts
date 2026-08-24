@@ -218,7 +218,12 @@ export function pasa(
     if (f.internet === "sin" && s.internet_2024 !== false) return false;
   }
 
-  if (s.matricula < f.matriculaMin) return false;
+  // Contra la matricula que la pantalla muestra, no contra la de 2022. `alumnos`
+  // prefiere la del C-600 de 2024 y, en el Valle, la que publica su Secretaria.
+  // Filtrando por `s.matricula` a secas, el deslizador recortaba por un numero
+  // y la ficha ensenaba otro: una sede con 4 alumnos en 2022 y 40 hoy se caia
+  // del mapa al pedir un minimo de 10.
+  if (alumnos(s) < f.matriculaMin) return false;
   // El quintil sin elegir no filtra. Elegido, una sede sin RWI queda fuera:
   // no se puede afirmar que pertenezca a un quintil que no se le calculo.
   if (f.quintiles.length && (s.rwi_q == null || !f.quintiles.includes(s.rwi_q))) {
@@ -435,6 +440,11 @@ export function sedesConDano(
         establecimiento: d.establecimiento,
         mpio: d.mpio,
         depto: d.depto,
+        // La entidad que responde por la sede. Viene en el propio reporte, y
+        // sin copiarla aqui estas sedes desaparecian en cuanto alguien elegia
+        // una secretaria: el filtro las leia sin entidad y las dejaba fuera de
+        // su propio territorio.
+        secretaria: d.secretaria,
         matricula: d.matricula,
         // El daño trae la matrícula ya resuelta con la misma regla de
         // `alumnos`: manda el C-600 de 2024 y cae al SIMAT de 2022 cuando la
@@ -773,6 +783,12 @@ export function sinRecorteDeBanda(f: Filtros): boolean {
  * por zona, no hay forma honesta de decir si pasan el filtro, y quedan fuera por
  * la misma regla con la que `pasa` deja fuera a una sede sin quintil cuando se
  * elige un quintil.
+ *
+ * La matricula minima no esta en la lista, aunque tambien recorta. Es el unico
+ * atributo que esas sedes si traen, porque viaja en el propio reporte de dano,
+ * asi que se les puede aplicar y se les aplica en `page.tsx`. Tenerla aqui
+ * borraba de la pantalla de arranque a todas las sedes fuera del marco, solo
+ * por venir el visor con un minimo puesto.
  */
 export function pideAtributos(f: Filtros): boolean {
   return f.zonas.length > 0
@@ -780,7 +796,6 @@ export function pideAtributos(f: Filtros): boolean {
     || f.pties.length > 0
     || f.ividCategorias.length > 0
     || f.quintiles.length > 0
-    || f.matriculaMin > 0
     || (f.tab === "fisica" && f.fisica !== "todas")
     || (f.tab === "servicios"
       && (f.energia !== "todas" || f.internet !== "todas"));
@@ -954,7 +969,7 @@ export function horaLocal(isoUtc: string): string {
  * cambian allí hay que cambiarlos aquí, que es la deuda conocida de tener la
  * cifra escrita en prosa.
  */
-export const FUENTES_DEL_VISOR = `Este visor permite identificar espacialmente y obtener información actualizada de las escuelas afectadas por el sismo del 10 de agosto de 2026 en Colombia. Combina información de reportes oficiales del MEN, secretarías de educación y noticias con registros administrativos para permitir la caracterización de las escuelas. Ninguna de las 26.591 sedes que dibuja tiene inspección técnica confirmada. Todo lo que se ve es declarado por alguien o estimado por un modelo, y cada punto dice quién lo afirma.
+export const FUENTES_DEL_VISOR = `Este visor permite identificar espacialmente y obtener información actualizada de las escuelas afectadas por el sismo del 10 de agosto de 2026 en Colombia. Combina información de reportes oficiales del MEN, secretarías de educación y noticias con registros administrativos para permitir la caracterización de las escuelas. Ninguna de las 26.636 sedes que dibuja trae el concepto de un ingeniero: 43 sedes del Valle declaran que ya existe uno, pero el concepto mismo vive en el aplicativo de la Secretaría de Infraestructura y no en este mapa. Todo lo que se ve es declarado por alguien o estimado por un modelo, y cada punto dice quién lo afirma.
 
 CÓMO SE USA
 Elija una secretaría: recorta las sedes, los daños y las cuentas de la derecha. Las casillas de daño deciden qué se dibuja, y su número cuenta exactamente los puntos del mapa.
@@ -966,9 +981,9 @@ La intensidad (MMI) es sacudida estimada por un modelo, no daño observado.
 Un tramo gris siempre significa "no sabemos", nunca "no tiene".
 Lo de "cómo están hoy" describe un momento, no una condición permanente.
 
-QUIÉN REPORTA EL DAÑO — 1.791 sedes
-Secretaría de Educación del Valle del Cauca. 570 sedes, corte al 16 de agosto. Consolidado de lo que declararon sus rectores, y única fuente que dice si la escuela está dando clase, qué porcentaje está afectado y qué pide. Manda sobre el MEN en sus sedes. Su archivo no trae código DANE: el emparejamiento lo hicimos nosotros y cada ficha dice con qué regla.
-MEN. 1.705 sedes, corte al 15 de agosto. Declara estado en 1.813 de las 52.611 sedes de su universo priorizado, desde un formulario que el propio Ministerio declara no exhaustivo.
+QUIÉN REPORTA EL DAÑO — 2.046 sedes
+Secretaría de Educación del Valle del Cauca. 903 sedes, corte al 22 de agosto, con 20 que solo trae el corte del 16. Consolidado de lo que declararon sus rectores, y única fuente que dice si la escuela está dando clase, qué porcentaje está afectado y qué pide. Manda sobre el MEN en sus sedes. Su archivo no trae código DANE: el emparejamiento lo hicimos nosotros y cada ficha dice con qué regla.
+MEN. 1.739 sedes, corte al 15 de agosto. Su capa cubre 52.611 sedes y solo 2.525 declaran algo: las demás dicen "no aporta información". De esas 2.525, las que quedan dentro del alcance del sismo son las que se dibujan aquí. El estado sale de un formulario que el propio Ministerio declara no exhaustivo, así que una sede sin reporte no es una sede sin daño.
 BID. 16 sedes. Reporte del equipo PTIES, corte al 10 de agosto.
 Prensa. 178 sedes. Declaración de una autoridad, con nombre, cargo, fecha y cita textual.
 ChatMap (HOT). 1 sede. Foto ciudadana emparejada con la sede; no afirma nada del edificio.

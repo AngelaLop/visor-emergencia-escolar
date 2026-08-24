@@ -14,6 +14,7 @@
 import { useState } from "react";
 
 import { PinSede } from "@/components/Iconos";
+import { Info } from "@/components/Piezas";
 import { miles } from "@/lib/datos";
 import type { Resumen } from "@/lib/datos";
 import { MAPAS_BASE } from "@/lib/tipos";
@@ -44,6 +45,15 @@ type Props = {
    *  bajo el mismo rótulo diría dos cosas distintas según una casilla que está
    *  en otra tarjeta. */
   soloDanos: boolean;
+  /** Las sedes con daño que no se pueden dibujar porque nadie tiene su punto.
+   *
+   * No están filtradas: ninguna fuente sabe dónde quedan, ni el SIMAT de 2022,
+   * ni el directorio del MEN de 2026, ni la capa del Ministerio. Sin coordenada
+   * no hay punto, así que quedan fuera del mapa y del número grande.
+   *
+   * Se dicen en pantalla porque callarlas convierte el contador en una
+   * afirmación falsa: quien lo lee entiende "estas son todas". */
+  sinCoordenada: { sedes: number; matricula: number };
   /** El tramo resaltado desde la tarjeta de características, si hay uno.
    *
    * El resalte no recorta el mapa: allí las demás sedes siguen dibujadas, en
@@ -66,6 +76,7 @@ export default function ControlDerecho({
   conDano,
   conDanoFuera,
   soloDanos,
+  sinCoordenada,
   resalte,
   onExportar,
   onExportarResalte,
@@ -94,10 +105,26 @@ export default function ControlDerecho({
             </span>
           </div>
           <div
-            className="hidden text-xs md:block"
+            className="hidden items-center gap-1 text-xs md:flex"
             style={{ color: "var(--tinta-2)" }}
           >
             {rotulo}
+            {sinCoordenada.sedes > 0 && (
+              <Info
+                texto={
+                  `${miles(sinCoordenada.sedes)} sedes más tienen daño reportado `
+                  + "y no están en este número, porque ninguna de nuestras "
+                  + "fuentes sabe dónde quedan: ni el directorio del SIMAT de "
+                  + "2022, ni el del Ministerio de 2026, ni la capa de sedes "
+                  + "afectadas del propio Ministerio. Sin coordenada no hay "
+                  + "punto que dibujar. Detrás de ellas hay "
+                  + `${miles(sinCoordenada.matricula)} estudiantes. `
+                  + "Aparecen en el archivo que se descarga con el botón de "
+                  + "abajo, y la forma de recuperarlas es que la entidad que "
+                  + "las reportó diga de qué predio habla."
+                }
+              />
+            )}
           </div>
 
           {/* Solo cuando hay alguna. Una línea que dice "0 con daño reportado"
