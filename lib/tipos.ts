@@ -661,14 +661,19 @@ export type Filtros = {
 };
 
 export const FILTROS_INICIALES: Filtros = {
-  // Las seis encendidas. Abria en 6,0 y 6,5, que es donde el USGS situa el
-  // inicio del dano estructural visible, y el argumento era bueno para un mapa
-  // de sacudida: por debajo de 6,0 no se espera dano. Pero la banda tambien
-  // recorta las escuelas que se cuentan, y ahi el corte hacia otra cosa: dejaba
-  // fuera de la pantalla de arranque las sedes de las cuatro bandas bajas sin
-  // que nada dijera que existian. Quien quiera el recorte estrecho lo tiene a
-  // dos clics en "Quitar todas" y volver a marcar las dos altas.
-  bandas: [4.0, 4.5, 5.0, 5.5, 6.0, 6.5],
+  // Ninguna encendida. Pasaron por aqui dos arranques anteriores: 6,0 y 6,5,
+  // que es donde el USGS situa el inicio del dano estructural visible, y luego
+  // las seis, para que las bandas bajas no quedaran fuera de la pantalla sin
+  // que nada dijera que existian.
+  //
+  // Vacio no es un tercer recorte, es el opuesto de recortar por sacudida. Sin
+  // ninguna banda encendida, `pasa` en `lib/datos.ts` solo deja pasar las sedes
+  // que alguien reporto danadas, y `sinRecorteDeBanda` deja de atenuar nada
+  // porque no hay un dentro contra el que contrastar. El visor abre entonces
+  // con lo unico que esta afirmado por una fuente: las escuelas de las que
+  // alguien dijo que se danaron. La sacudida es un modelo y queda de segunda
+  // pregunta, a un clic en "Seleccionar todas".
+  bandas: [],
   zonas: [],
   // Vacio es "todas", incluidas las que ya no operan. Una escuela liquidada con
   // el edificio en pie sigue importando despues de un sismo: puede ser

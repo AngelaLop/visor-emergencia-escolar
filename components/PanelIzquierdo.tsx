@@ -1377,7 +1377,10 @@ function TarjetaCapas({
   // filtros, y ninguno de los dos se necesita antes de haber elegido territorio.
   const [secretariaAbierta, setSecretariaAbierta] = useState(true);
   const [sedesAbierta, setSedesAbierta] = useState(false);
-  const [intensidadAbierta, setIntensidadAbierta] = useState(true);
+  // Plegada al abrir, porque al abrir no hay ninguna banda encendida. Abierta
+  // sobre seis casillas en blanco, la seccion ocupa media columna para decir
+  // que no se esta preguntando nada por la sacudida.
+  const [intensidadAbierta, setIntensidadAbierta] = useState(false);
   const [masFiltros, setMasFiltros] = useState(false);
   const set = (p: Partial<Filtros>) => onFiltros({ ...filtros, ...p });
   const alternaLista = (lista: string[], v: string) =>
@@ -1409,9 +1412,15 @@ function TarjetaCapas({
    * se vea al instante: con la capa apagada, la casilla se marcaba y no pasaba
    * nada.
    *
-   * Al quitar la ultima secretaria se vuelve al arranque, 6,0 y 6,5, y no a
-   * ninguna ni a todas: dejar el recorte cambiado convertiria un rodeo por una
-   * secretaria en un cambio permanente del mapa que nadie pidio.
+   * Al quitar la ultima secretaria se vuelve al arranque, sea cual sea, y no a
+   * todas: dejar el recorte cambiado convertiria un rodeo por una secretaria en
+   * un cambio permanente del mapa que nadie pidio. Por eso se lee de
+   * `FILTROS_INICIALES` en vez de escribir aqui una lista de bandas, que se
+   * quedaria vieja cada vez que el arranque cambie. Ya se quedo vieja dos veces.
+   *
+   * El arranque hoy es ninguna banda, asi que volver a el tambien vuelve a
+   * plegar la seccion. Si se dejara desplegada, el rodeo por una secretaria
+   * terminaria dejando media columna ocupada por seis casillas en blanco.
    */
   const eligeSecretaria = (v: string) => {
     const lista = alternaLista(filtros.secretarias, v);
@@ -1429,7 +1438,7 @@ function TarjetaCapas({
     }
     if (ninguna) {
       onCapas({ ...capas, intensidad: true });
-      setIntensidadAbierta(true);
+      setIntensidadAbierta(FILTROS_INICIALES.bandas.length > 0);
       setMasFiltros(false);
     }
   };
@@ -1437,7 +1446,7 @@ function TarjetaCapas({
   const limpiaSecretarias = () => {
     set({ secretarias: [], bandas: FILTROS_INICIALES.bandas });
     onCapas({ ...capas, intensidad: true });
-    setIntensidadAbierta(true);
+    setIntensidadAbierta(FILTROS_INICIALES.bandas.length > 0);
     setMasFiltros(false);
   };
 

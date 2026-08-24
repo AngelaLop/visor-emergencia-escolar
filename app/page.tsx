@@ -108,8 +108,14 @@ export default function Pagina() {
    *
    * También vive aquí porque decide el ancho de la columna derecha entera. Las
    * barras no caben en los 240 px con los que abre la columna, y ensanchar solo
-   * la tarjeta de daños dejaría la pila con el borde izquierdo desigual. */
-  const [caracteristicas, setCaracteristicas] = useState(false);
+   * la tarjeta de daños dejaría la pila con el borde izquierdo desigual.
+   *
+   * Abre desplegado desde que el visor arranca en solo daños. Cerrado, la
+   * pantalla de entrada eran puntos rojos sobre un mapa y nada que dijera qué
+   * tienen en común esas escuelas; el desglose por característica es la única
+   * lectura de conjunto de las sedes dañadas, y estaba a un clic que nadie daba
+   * porque nada anunciaba que existía. */
+  const [caracteristicas, setCaracteristicas] = useState(true);
   // Los logos van pegados a la izquierda de la atribución del mapa base, y esa
   // barra cambia de ancho con cada mapa: la de OpenStreetMap no dice lo mismo
   // que la de CARTO. Se mide en vez de suponer un margen fijo.

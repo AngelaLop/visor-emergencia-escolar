@@ -350,7 +350,17 @@ export type Capas = {
 
 export const CAPAS_INICIALES: Capas = {
   intensidad: true,
-  sedes: true,
+  // Apagada al abrir. Con `reportes` encendida y esta apagada se activa
+  // `soloDanos` en `app/page.tsx`, que es el modo en el que la cuenta grande de
+  // la derecha pasa a ser "sedes educativas con dano reportado" en vez de
+  // "seleccionadas". Junto con las bandas vacias, el visor abre mostrando solo
+  // las escuelas que una fuente reporto danadas, y no las 26.591 que el modelo
+  // de sacudida deja dentro del recorte.
+  //
+  // No desaparece nada: la fila "Sedes educativas" del panel izquierdo la
+  // vuelve a encender de un clic, y es la misma fila donde viven el buscador
+  // por nombre y los siete filtros de sede.
+  sedes: false,
   territorio: true,
   reportes: true,
   huellas: true,
