@@ -92,6 +92,9 @@ type Props = {
   /** Todos los daños con coordenada, dependan o no de la selección de sedes.
    *  Los arma `danosVisibles`. */
   danos: Dano[];
+  /** Los codigos que sobreviven a los filtros. La tarjeta de daños los usa
+   *  para decir cuantos puntos quedan atenuados y por que. */
+  danesSeleccion: Set<string>;
   /** Cuántas sedes con reporte no tienen coordenada, o sea las únicas que no
    *  hay forma de dibujar. Ya no es "las que la selección deja fuera": la
    *  selección dejó de tapar reportes. */
@@ -378,6 +381,7 @@ export type PropsDanos = Pick<
   | "filtros"
   | "reportes"
   | "danos"
+  | "danesSeleccion"
   | "danosFuera"
   | "metaMen"
   | "edicionMen"
@@ -390,6 +394,7 @@ export function TarjetaDanos({
   filtros,
   reportes,
   danos,
+  danesSeleccion,
   danosFuera,
   metaMen,
   edicionMen,
@@ -655,9 +660,19 @@ export function TarjetaDanos({
   // con una secretaria elegida, el mapa dibuja todos los puntos a plena tinta y
   // esta casilla ofreceria destapar unos puntos atenuados que no existen. Es la
   // misma regla que usa el mapa para no atenuar, y por eso vive en un solo sitio.
-  const fueraDeBanda = sinRecorteDeBanda(filtros) ? 0 : peoresTodos.filter(
+  // Fuera de la seleccion, no solo fuera de banda. Un punto se atenua por dos
+  // razones y hasta hoy esta cuenta solo miraba una: que la sede caiga fuera de
+  // las bandas encendidas, y que no sobreviva a los filtros de atributo de la
+  // izquierda. Con "rural" marcado y ninguna banda encendida habia cientos de
+  // puntos translucidos y ni esta cifra ni esta casilla existian para
+  // explicarlos, porque `sinRecorteDeBanda` daba cero.
+  const fueraDeSeleccion = peoresTodos.filter(
     (d) => dibujado(d)
-      && (d.banda == null || !filtros.bandas.includes(d.banda)),
+      && !(
+        (sinRecorteDeBanda(filtros)
+          || (d.banda != null && filtros.bandas.includes(d.banda)))
+        && danesSeleccion.has(d.dane)
+      ),
   ).length;
   const todasLasBandas = capas.danosTodasLasBandas;
 
@@ -840,7 +855,7 @@ export function TarjetaDanos({
           incluidos los de las cinco sedes que ni siquiera tienen banda porque
           caen fuera de la grilla del ShakeMap, y los que quedan fuera del
           recorte se dibujan atenuados para que se note cuales son. */}
-      {fueraDeBanda > 0 && (
+      {fueraDeSeleccion > 0 && (
         <div className="px-4 pb-2">
           <button
             onClick={() =>
@@ -863,13 +878,14 @@ export function TarjetaDanos({
               Ver todas las sedes reportadas.{" "}
               {todasLasBandas ? (
                 <>
-                  <span className="num">{miles(fueraDeBanda)}</span> sedes caen
-                  fuera de las bandas encendidas y se dibujan atenuadas.
+                  <span className="num">{miles(fueraDeSeleccion)}</span> sedes
+                  con reporte quedan fuera de la selección y se dibujan
+                  atenuadas.
                 </>
               ) : (
                 <>
-                  Hay <span className="num">{miles(fueraDeBanda)}</span> sedes
-                  con reporte fuera de las bandas encendidas que ahora no se
+                  Hay <span className="num">{miles(fueraDeSeleccion)}</span>{" "}
+                  sedes con reporte fuera de la selección que ahora no se
                   dibujan.
                 </>
               )}
@@ -1506,10 +1522,28 @@ function TarjetaCapas({
               capa, pero decia de menos: la fila no es solo el interruptor de un
               dibujo, es donde se busca una escuela por nombre y donde viven los
               siete filtros que deciden cuales se cuentan. */}
+          {/* Encenderla con ninguna banda marcada no pintaba nada. El visor
+              abre sin bandas, y sin bandas `pasa` solo deja pasar las sedes que
+              alguien reporto danadas: la capa se prendia y el mapa se quedaba
+              igual, con las mismas escuelas que ya estaban.
+
+              Asi que prenderla marca tambien las seis bandas, que es lo que
+              hace aparecer el inventario, y apaga la mancha de intensidad, que
+              si no cubriria el pais entero de color encima de los puntos. Con
+              una secretaria elegida no hace falta: alli la banda ya no reparte
+              y sus escuelas se dibujan completas. */}
           <FilaCapa
             nombre="Sedes educativas"
             activa={capas.sedes}
-            onAlternar={() => onCapas({ ...capas, sedes: !capas.sedes })}
+            onAlternar={() => {
+              const prendiendo = !capas.sedes;
+              onCapas({ ...capas, sedes: prendiendo,
+                intensidad: prendiendo ? false : capas.intensidad });
+              if (prendiendo && filtros.bandas.length === 0
+                  && filtros.secretarias.length === 0) {
+                onFiltros({ ...filtros, bandas: BANDAS.map((b) => b.banda) });
+              }
+            }}
             muestra={<Gota color="var(--sede-base)" />}
             plegada={!sedesAbierta}
             onPlegar={() => setSedesAbierta(!sedesAbierta)}

@@ -162,6 +162,19 @@ type Props = {
   evento: Evento | null;
   sedes: RasgoSede[];
   danos: Dano[];
+  /** Los codigos DANE que sobreviven a los filtros de la izquierda.
+   *
+   * Se usa para atenuar, no para quitar. Un filtro de atributo (zona, quintil,
+   * matricula, vigencia) dice algo del registro administrativo de la sede, no
+   * del dano: apagar un atributo no puede apagar la evidencia de que alguien
+   * afirmo que esa escuela se cayo. Asi el mapa sigue mostrando todo el dano
+   * reportado y marca cual esta dentro de la seleccion, que es lo que cuenta la
+   * cifra de la derecha.
+   *
+   * La secretaria es la excepcion y no pasa por aqui: esa si recorta de verdad,
+   * en `danosVisibles`, porque elegir una entidad es decir de que territorio se
+   * esta hablando y no filtrar por un atributo. */
+  danesSeleccion: Set<string>;
   /** Los DANE con algun reporte, para que el filtro de la lista los distinga. */
   danesConReporte: string[];
   colombia: unknown | null;
@@ -516,6 +529,7 @@ export default function Mapa({
   evento,
   sedes,
   danos,
+  danesSeleccion,
   danesConReporte,
   filtros,
   capas,
@@ -550,10 +564,10 @@ export default function Mapa({
   // Cambiar de tema recarga el estilo entero y con el se van todas las fuentes,
   // asi que hay que poder volver a montarlas con los datos que hubiera.
   const datos = useRef({ contornos, bordeGrilla, colombia, secretarias, sedes,
-    danos, danesConReporte, danesConPin, filtros, capas, tema,
+    danos, danesSeleccion, danesConReporte, danesConPin, filtros, capas, tema,
     controlesIzquierda });
   datos.current = { contornos, bordeGrilla, colombia, secretarias, sedes,
-    danos, danesConReporte, danesConPin, filtros, capas, tema,
+    danos, danesSeleccion, danesConReporte, danesConPin, filtros, capas, tema,
     controlesIzquierda };
   const alClic = useRef(onSeleccion);
   alClic.current = onSeleccion;
@@ -619,7 +633,14 @@ export default function Mapa({
         // banda solo pinta y no reparte (ver `pasa` en `lib/datos.ts`). Atenuar
         // contra una lista que no recorta dejaria todos los puntos translucidos
         // sin que nada lo explique.
-        en_seleccion: sinRecorte || (d.banda != null && bandas.includes(d.banda)),
+        // Dos condiciones, y las dos atenuan igual: que la sede caiga en las
+        // bandas encendidas, y que sobreviva a los filtros de atributo de la
+        // izquierda. Estaba solo la primera, asi que marcar "rural" recortaba
+        // la cifra de la derecha a 1.252 mientras el mapa seguia dibujando los
+        // 2.049 puntos, sin que nada dijera cuales eran los 1.252.
+        en_seleccion: (sinRecorte
+            || (d.banda != null && bandas.includes(d.banda)))
+          && datos.current.danesSeleccion.has(d.dane),
       },
       geometry: {
         type: "Point" as const,
@@ -1393,7 +1414,7 @@ export default function Mapa({
     // cambia con ellas. No cambia qué puntos hay, solo cuáles se ven
     // atenuados, pero eso vive en la fuente y hay que reescribirla. Los estados
     // siguen yendo por `setFilter`, más abajo, que no toca la fuente.
-  }, [danos, filtros.bandas, generacion]);
+  }, [danos, danesSeleccion, filtros.bandas, generacion]);
 
   useEffect(() => {
     cuandoListo((m) => {

@@ -316,6 +316,15 @@ export default function Pagina() {
     [coleccion, filtros, danesAfirmado, fueraDelMarco],
   );
   const indice = useMemo(() => indiceMarco(sedesMarco), [sedesMarco]);
+  /** Los codigos que sobreviven a los filtros, para que el mapa atenue el resto.
+   *
+   * Sale del mismo `sedesMarco` que alimenta la cifra de la derecha, asi que las
+   * dos hablan del mismo recorte por construccion. */
+  const danesSeleccion = useMemo(
+    () => new Set(sinOcultas(sedesMarco, danesOcultas)
+      .map((f) => f.properties.dane)),
+    [sedesMarco, danesOcultas],
+  );
   const resumen = useMemo(
     () => resumeSin(indice, danesOcultas),
     [indice, danesOcultas],
@@ -637,6 +646,7 @@ export default function Pagina() {
         sedes={sedesMarco}
         danesConPin={danesConPin}
         danos={danosEnMapa}
+        danesSeleccion={danesSeleccion}
         foco={foco}
         danesConReporte={danesConReporte}
         filtros={filtros}
@@ -666,6 +676,7 @@ export default function Pagina() {
         sedes={sedesMarco}
         ocultas={danesOcultas}
         danos={danosEnMapa}
+        danesSeleccion={danesSeleccion}
         danosFuera={nDanosFuera}
         metaMen={metaMen}
         edicionMen={edicionMen}
@@ -730,6 +741,7 @@ export default function Pagina() {
               filtros={filtros}
               reportes={reportes}
               danos={danosEnMapa}
+              danesSeleccion={danesSeleccion}
               danosFuera={nDanosFuera}
               metaMen={metaMen}
               edicionMen={edicionMen}
