@@ -112,16 +112,10 @@ export default function ControlDerecho({
             {sinCoordenada.sedes > 0 && (
               <Info
                 texto={
-                  `${miles(sinCoordenada.sedes)} sedes más tienen daño reportado `
-                  + "y no están en este número, porque ninguna de nuestras "
-                  + "fuentes sabe dónde quedan: ni el directorio del SIMAT de "
-                  + "2022, ni el del Ministerio de 2026, ni la capa de sedes "
-                  + "afectadas del propio Ministerio. Sin coordenada no hay "
-                  + "punto que dibujar. Detrás de ellas hay "
-                  + `${miles(sinCoordenada.matricula)} estudiantes. `
-                  + "Aparecen en el archivo que se descarga con el botón de "
-                  + "abajo, y la forma de recuperarlas es que la entidad que "
-                  + "las reportó diga de qué predio habla."
+                  `${miles(sinCoordenada.sedes)} sedes con daño no entran en `
+                  + "este número: ninguna fuente tiene su coordenada, así que "
+                  + "no hay punto que dibujar. Detrás hay "
+                  + `${miles(sinCoordenada.matricula)} estudiantes.`
                 }
               />
             )}

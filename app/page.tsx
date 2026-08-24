@@ -41,6 +41,7 @@ import {
   miles,
   pideAtributos,
   resume,
+  sinCoordenada,
   sinRecorteDeBanda,
   resumeSin,
   sedesConDano,
@@ -374,20 +375,18 @@ export default function Pagina() {
    * Respetan el desglose de estados y subtipos, igual que el contador, para que
    * el aviso hable siempre del mismo recorte que el número al que acompaña.
    */
-  const sinCoordenada = useMemo(() => {
-    const vistas = new Set<string>();
-    let sedes = 0;
-    let matricula = 0;
-    for (const d of danosPintados) {
-      if (d.lon != null && d.lat != null) continue;
-      if (!danoMarcado(d, capas.estadosDano, capas.subtipos)) continue;
-      if (vistas.has(d.dane)) continue;
-      vistas.add(d.dane);
-      sedes += 1;
-      matricula += d.matricula ?? 0;
-    }
-    return { sedes, matricula };
-  }, [danosPintados, capas.estadosDano, capas.subtipos]);
+  /** Las sedes con daño que no se pueden dibujar, y sus estudiantes.
+   *
+   * Sale de `danos` y no de `danosPintados`: esa lista ya paso por
+   * `danosVisibles`, que descarta justamente las que no tienen coordenada, asi
+   * que calculada ahi daba cero siempre y el aviso no se mostraba nunca.
+   *
+   * Es la misma regla y el mismo recorrido que alimentan el "no se pueden
+   * dibujar" de la tarjeta de daños, para que las dos digan el mismo numero. */
+  const sinCoord = useMemo(
+    () => sinCoordenada(danos, filtros.secretarias),
+    [danos, filtros.secretarias],
+  );
 
   const resumenDanos = useMemo(
     () => (soloDanos ? resume(rasgosConDano) : VACIO),
@@ -693,7 +692,7 @@ export default function Pagina() {
           onExportarResalte={resalte
             ? () => descarga(sedesResaltadas)
             : null}
-          sinCoordenada={sinCoordenada}
+          sinCoordenada={sinCoord}
           conDano={soloDanos ? resumenDanos.sedes : nConDano}
           // Con la pantalla en modo solo daños el número grande ya es el total
           // de sedes dibujadas con daño, así que no queda ninguna fuera y no hay

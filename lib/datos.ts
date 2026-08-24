@@ -378,13 +378,39 @@ export function enSecretaria(d: Dano, secretarias: string[]): boolean {
  * seguían declarando no dibujables mientras el mapa las estaba dibujando.
  */
 export function danosFuera(danos: Dano[], secretarias: string[] = []): number {
+  return sinCoordenada(danos, secretarias).sedes;
+}
+
+/** Las mismas sedes que `danosFuera`, y los estudiantes que hay detrás.
+ *
+ * La cuenta de sedes y la de alumnos salen del mismo recorrido a proposito. La
+ * tarjeta de daños declara cuantas sedes no se pueden dibujar y el boton de
+ * informacion de la cifra grande declara ademas su matricula: calculadas por
+ * separado acabarian diciendo numeros que no se corresponden, que es como esta
+ * pantalla ya se ha contradicho antes.
+ *
+ * La matricula se suma una vez por sede y no por reporte. Una sede que salio en
+ * prensa y ademas la reporto el MEN tiene dos filas con la misma matricula, y
+ * sumarlas diria que esa escuela tiene el doble de ninos.
+ */
+export function sinCoordenada(
+  danos: Dano[],
+  secretarias: string[] = [],
+): { sedes: number; matricula: number } {
   const dentro = danos.filter((d) => enSecretaria(d, secretarias));
   const dibujables = new Set(
     dentro.filter((d) => d.lon != null && d.lat != null).map((d) => d.dane),
   );
-  return new Set(
-    dentro.map((d) => d.dane).filter((k) => !dibujables.has(k)),
-  ).size;
+  const vistas = new Map<string, number>();
+  for (const d of dentro) {
+    if (dibujables.has(d.dane) || vistas.has(d.dane)) continue;
+    vistas.set(d.dane, d.matricula ?? 0);
+  }
+  let matricula = 0;
+  vistas.forEach((m) => {
+    matricula += m;
+  });
+  return { sedes: vistas.size, matricula };
 }
 
 /** Las sedes con daño reportado que el mapa está dibujando, como rasgos.
