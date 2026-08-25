@@ -1537,11 +1537,19 @@ function TarjetaCapas({
             activa={capas.sedes}
             onAlternar={() => {
               const prendiendo = !capas.sedes;
+              const tocaBandas = filtros.secretarias.length === 0;
               onCapas({ ...capas, sedes: prendiendo,
-                intensidad: prendiendo ? false : capas.intensidad });
-              if (prendiendo && filtros.bandas.length === 0
-                  && filtros.secretarias.length === 0) {
+                intensidad: prendiendo ? false : true });
+              if (!tocaBandas) return;
+              // Apagarla deshace lo que hizo prenderla. Sin esto, prender y
+              // apagar dejaba las seis casillas marcadas y la mancha apagada:
+              // un estado que nadie eligio y que ademas se contradice, porque
+              // las casillas dicen que hay bandas encendidas y no se pinta
+              // ninguna.
+              if (prendiendo && filtros.bandas.length === 0) {
                 onFiltros({ ...filtros, bandas: BANDAS.map((b) => b.banda) });
+              } else if (!prendiendo) {
+                onFiltros({ ...filtros, bandas: FILTROS_INICIALES.bandas });
               }
             }}
             muestra={<Gota color="var(--sede-base)" />}

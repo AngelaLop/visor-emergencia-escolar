@@ -71,6 +71,23 @@ type Props = {
   onExportarResalte: (() => void) | null;
 };
 
+/** El aviso de las sedes que no se pueden dibujar.
+ *
+ * Escrito una vez y usado en las dos anchuras. Duplicado, el texto de la version
+ * de telefono se habria quedado viejo la primera vez que alguien tocara el otro.
+ */
+function AvisoSinCoordenada({ n }: { n: { sedes: number; matricula: number } }) {
+  return (
+    <Info
+      texto={
+        `${miles(n.sedes)} sedes con daño no entran en este número: ninguna `
+        + "fuente tiene su coordenada, así que no hay punto que dibujar. "
+        + `Detrás hay ${miles(n.matricula)} estudiantes.`
+      }
+    />
+  );
+}
+
 export default function ControlDerecho({
   resumen,
   conDano,
@@ -98,10 +115,14 @@ export default function ControlDerecho({
               {miles(resumen.sedes)}
             </span>
             <span
-              className="text-[11px] leading-tight md:hidden"
+              className="flex items-center gap-1 text-[11px] leading-tight md:hidden"
               style={{ color: "var(--tinta-2)" }}
             >
               {soloDanos ? "sedes con daño" : "sedes educativas"}
+              {/* Tambien en telefono. Vivia solo en el rotulo ancho, que es
+                  `hidden md:flex`, asi que en pantalla angosta nada declaraba
+                  las sedes que no se pueden dibujar. */}
+              {sinCoordenada.sedes > 0 && <AvisoSinCoordenada n={sinCoordenada} />}
             </span>
           </div>
           <div
@@ -109,16 +130,7 @@ export default function ControlDerecho({
             style={{ color: "var(--tinta-2)" }}
           >
             {rotulo}
-            {sinCoordenada.sedes > 0 && (
-              <Info
-                texto={
-                  `${miles(sinCoordenada.sedes)} sedes con daño no entran en `
-                  + "este número: ninguna fuente tiene su coordenada, así que "
-                  + "no hay punto que dibujar. Detrás hay "
-                  + `${miles(sinCoordenada.matricula)} estudiantes.`
-                }
-              />
-            )}
+            {sinCoordenada.sedes > 0 && <AvisoSinCoordenada n={sinCoordenada} />}
           </div>
 
           {/* Solo cuando hay alguna. Una línea que dice "0 con daño reportado"
