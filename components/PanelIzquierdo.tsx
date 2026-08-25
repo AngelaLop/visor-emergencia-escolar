@@ -830,6 +830,14 @@ export function TarjetaDanos({
         )}
       </div>
 
+      <p
+        className="px-4 pb-2 text-[10px] leading-relaxed"
+        style={{ color: "var(--tinta-3)" }}
+      >
+        Los cuadrados de color son instituciones de educación superior con
+        reporte de daño. No entran en esta cifra: no son sedes del SIMAT.
+      </p>
+
       {/* Aqui vivio la caja de verificacion tecnica y se fue el 21 de agosto de
           2026, leyendo las fichas.
 
@@ -1417,19 +1425,36 @@ function TarjetaCapas({
   // vez que alguien tocara otra casilla.
   const sinNivelEnMarco = useMemo(() => sinNivel(sedes), [sedes]);
 
-  // Si lo unico marcado es educacion superior, el mapa se queda sin escuelas y
-  // la nota al pie tiene que decir eso y no explicar de donde sale el nivel de
-  // una sede que no se esta dibujando.
-  const soloSuperior = filtros.niveles.length > 0
-    && filtros.niveles.every((n) => NIVELES_SUPERIOR.includes(n));
+  // Si hay educación superior marcada, el mapa se queda sin escuelas: pin y
+  // cuadrado juntos no se leen. La nota al pie tiene que decir eso.
+  const soloSuperior = filtros.niveles.some((n) => NIVELES_SUPERIOR.includes(n));
 
-  /** Marca o desmarca un nivel. Llega el nombre en pantalla y sale el id. */
+  /** Marca o desmarca un nivel.
+   *
+   * Educación superior y los niveles escolares son dos preguntas distintas y
+   * no conviven: marcar una apaga la otra. Así el mapa no mezcla pines de
+   * escuela con cuadrados de universidad.
+   *
+   * Al prender educación superior se enciende la capa de sedes, que es el
+   * inventario: las 391 o las 33. Si ya estaba apagada, marcar la casilla y
+   * no ver nada sería el mismo interruptor contradiciéndose. El ojo de
+   * "Sedes educativas" y el de "Daños reportados" siguen siendo independientes:
+   * apagar uno solo esconde esa capa. */
   const eligeNivel = (nombre: string) => {
     const n = NIVELES.find((x) => x.nombre === nombre);
     if (!n) return;
-    set({ niveles: filtros.niveles.includes(n.id)
-      ? filtros.niveles.filter((x) => x !== n.id)
-      : [...filtros.niveles, n.id] });
+    const ya = filtros.niveles.includes(n.id);
+    if (NIVELES_SUPERIOR.includes(n.id)) {
+      const resto = filtros.niveles.filter((x) => NIVELES_SUPERIOR.includes(x));
+      const niveles = ya ? resto.filter((x) => x !== n.id) : [...resto, n.id];
+      set({ niveles });
+      const queda = niveles.some((x) => NIVELES_SUPERIOR.includes(x));
+      if (queda) onCapas({ ...capas, sedes: true });
+      else onCapas({ ...capas, sedes: false });
+      return;
+    }
+    const resto = filtros.niveles.filter((x) => !NIVELES_SUPERIOR.includes(x));
+    set({ niveles: ya ? resto.filter((x) => x !== n.id) : [...resto, n.id] });
   };
 
   /** Elegir una secretaria cambia a que pregunta responde la pantalla.
@@ -1678,9 +1703,9 @@ function TarjetaCapas({
                     {filtros.niveles.includes("superior")
                       ? "las 391 instituciones del HECAA"
                       : "las 33 del préstamo CO-L1288"}{" "}
-                    y ninguna escuela. Ninguna de ellas tiene reporte oficial de
-                    daño, porque el tablero del MEN y el de la Secretaría del
-                    Valle solo cubren de preescolar a media.
+                    y ninguna escuela. El ojo de sedes educativas apaga el
+                    inventario ocre; el de daños reportados, los cuadrados de
+                    color. Apagar uno no apaga el otro.
                   </>
                 ) : (
                   <>
@@ -1693,8 +1718,9 @@ function TarjetaCapas({
                       </>
                     )}
                     Las instituciones de educación superior no son sedes del
-                    SIMAT: van en su propia capa y sus coordenadas están
-                    geocodificadas, no declaradas.
+                    SIMAT: van en su propia capa, con coordenadas geocodificadas.
+                    Al marcarlas se apagan las escuelas, porque los dos símbolos
+                    juntos no se leen.
                   </>
                 )}
               </p>

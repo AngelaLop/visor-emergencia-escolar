@@ -125,7 +125,10 @@ export type Sede = {
  *  Es una casilla aparte y no un filtro dentro de la otra porque para el banco
  *  esas 33 son el universo entero, no un subconjunto que haya que ir a buscar.
  *  Con las dos marcadas mandan las 391: la más amplia gana, que es como se
- *  comportan las demás listas de este visor. */
+ *  comportan las demás listas de este visor.
+ *
+ *  Marcar cualquiera de las dos apaga las escuelas. Pin de sede y cuadrado de
+ *  IES juntos no se leen: el mapa pasa a ser de universidades. */
 export type NivelEducativo = "primera_infancia" | "basica" | "media"
   | "superior" | "superior_bid";
 
@@ -171,8 +174,10 @@ export const NIVELES_SUPERIOR: NivelEducativo[] = ["superior", "superior_bid"];
  *  `geo_score` y `geo_precision`: el mapa tiene que poder decir cuánta
  *  confianza merece cada uno.
  *
- *  Y ninguna trae estado físico. El tablero del MEN y el de la Secretaría del
- *  Valle solo cubren de preescolar a media. */
+ *  Y el estado físico, cuando lo hay, no sale del MEN ni de la Secretaría del
+ *  Valle: esas dos fuentes solo cubren de preescolar a media. Sale de
+ *  `data/curaduria/reportes_ies.csv`, un archivo firmado, y viaja en campos
+ *  `dano_*` para no pisar `estado`, que en el HECAA es Activa o Inactiva. */
 export type Ies = {
   codigo_ies: number;
   codigo_padre?: number;
@@ -204,6 +209,20 @@ export type Ies = {
   mmi?: number;
   banda?: number;
   nivel?: string;
+  /** Secretaría que cubre el municipio de la IES, pegada desde la base maestra
+   *  para que el filtro de la izquierda recorte universidades del mismo
+   *  territorio que las escuelas. */
+  secretaria?: string;
+  /** Fuente del reporte que pinta el punto. `oficial` manda sobre `noticia`. */
+  dano_fuente?: FuenteDano;
+  dano_emisor?: string;
+  dano_estado?: EstadoDano;
+  dano_subtipo?: string;
+  dano_quien?: string;
+  dano_cita?: string;
+  dano_medio?: string;
+  dano_url?: string;
+  dano_fecha?: string;
 };
 
 export type RasgoIes = {

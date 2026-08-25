@@ -39,12 +39,17 @@ type Props = {
    * script 23, y el mapa las dibuja igual porque una fuente afirmando que una
    * escuela se cayó no depende de que nuestro marco la tenga. */
   conDanoFuera: number;
-  /** Si el mapa está mostrando solo las escuelas con daño reportado, o sea con
-   *  la capa de sedes apagada y la de reportes prendida. Cambia qué se está
-   *  contando, y por eso tiene que cambiar también el rótulo: el mismo número
-   *  bajo el mismo rótulo diría dos cosas distintas según una casilla que está
-   *  en otra tarjeta. */
+  /** Si el mapa está mostrando solo las instituciones con daño reportado, o sea
+   *  con la capa de sedes apagada y la de reportes prendida. Cambia qué se está
+   *  contando, y por eso tiene que cambiar también el rótulo. */
   soloDanos: boolean;
+  /** Si el recorte de la pantalla es de instituciones de educación superior.
+   *
+   * Cambia el rótulo y lo que se cuenta debajo del número: programas vigentes
+   * en vez de estudiantes. Sin esto, con educación superior marcada el panel
+   * seguía diciendo "sedes educativas seleccionadas" y el número era cero,
+   * porque `pasaNivel` deja fuera a todas las escuelas. */
+  modoIes: boolean;
   /** Las sedes con daño que no se pueden dibujar porque nadie tiene su punto.
    *
    * No están filtradas: ninguna fuente sabe dónde quedan, ni el SIMAT de 2022,
@@ -93,14 +98,23 @@ export default function ControlDerecho({
   conDano,
   conDanoFuera,
   soloDanos,
+  modoIes,
   sinCoordenada,
   resalte,
   onExportar,
   onExportarResalte,
 }: Props) {
-  const rotulo = soloDanos
-    ? "sedes educativas con daño reportado"
-    : "sedes educativas seleccionadas";
+  const rotulo = modoIes
+    ? (soloDanos
+      ? "instituciones de educación superior con daño reportado"
+      : "instituciones de educación superior seleccionadas")
+    : (soloDanos
+      ? "sedes educativas con daño reportado"
+      : "sedes educativas seleccionadas");
+  const rotuloCorto = modoIes
+    ? (soloDanos ? "IES con daño" : "educación superior")
+    : (soloDanos ? "sedes con daño" : "sedes educativas");
+  const rotuloSegundo = modoIes ? "programas vigentes" : "estudiantes";
 
   return (
     <div className="pointer-events-auto flex w-full flex-col gap-2">
@@ -118,11 +132,11 @@ export default function ControlDerecho({
               className="flex items-center gap-1 text-[11px] leading-tight md:hidden"
               style={{ color: "var(--tinta-2)" }}
             >
-              {soloDanos ? "sedes con daño" : "sedes educativas"}
+              {rotuloCorto}
               {/* Tambien en telefono. Vivia solo en el rotulo ancho, que es
                   `hidden md:flex`, asi que en pantalla angosta nada declaraba
                   las sedes que no se pueden dibujar. */}
-              {sinCoordenada.sedes > 0 && <AvisoSinCoordenada n={sinCoordenada} />}
+              {sinCoordenada.sedes > 0 && !modoIes && <AvisoSinCoordenada n={sinCoordenada} />}
             </span>
           </div>
           <div
@@ -130,7 +144,7 @@ export default function ControlDerecho({
             style={{ color: "var(--tinta-2)" }}
           >
             {rotulo}
-            {sinCoordenada.sedes > 0 && <AvisoSinCoordenada n={sinCoordenada} />}
+            {sinCoordenada.sedes > 0 && !modoIes && <AvisoSinCoordenada n={sinCoordenada} />}
           </div>
 
           {/* Solo cuando hay alguna. Una línea que dice "0 con daño reportado"
@@ -256,11 +270,13 @@ export default function ControlDerecho({
             <span
               className="num text-xl font-semibold leading-none"
               title={
-                `Matrícula del C-600 de 2024. ` +
-                (resumen.matriculaDe2022 > 0
-                  ? `${miles(resumen.matriculaDe2022)} de las ${miles(resumen.sedes)} ` +
-                    `sedes no reportaron ese año y van con su matrícula del SIMAT 2022.`
-                  : `Todas las sedes que se cuentan aquí reportaron ese año.`)
+                modoIes
+                  ? "Programas vigentes declarados ante el HECAA. No es matrícula de estudiantes: una IES no tiene código DANE de sede."
+                  : (`Matrícula del C-600 de 2024. ` +
+                    (resumen.matriculaDe2022 > 0
+                      ? `${miles(resumen.matriculaDe2022)} de las ${miles(resumen.sedes)} ` +
+                        `sedes no reportaron ese año y van con su matrícula del SIMAT 2022.`
+                      : `Todas las sedes que se cuentan aquí reportaron ese año.`))
               }
             >
               {miles(resumen.matricula)}
@@ -269,14 +285,14 @@ export default function ControlDerecho({
               className="text-[11px] leading-tight md:hidden"
               style={{ color: "var(--tinta-2)" }}
             >
-              estudiantes
+            {rotuloSegundo}
             </span>
           </div>
           <div
             className="hidden text-xs md:block"
             style={{ color: "var(--tinta-2)" }}
           >
-            estudiantes
+            {rotuloSegundo}
           </div>
 
           <div
@@ -286,9 +302,11 @@ export default function ControlDerecho({
             <span>
               <span className="num">{miles(resumen.municipios)}</span> municipios
             </span>
-            <span>
-              <span className="num">{miles(resumen.secretarias)}</span> secretarías
-            </span>
+            {!modoIes && (
+              <span>
+                <span className="num">{miles(resumen.secretarias)}</span> secretarías
+              </span>
+            )}
           </div>
 
           {/* En el teléfono la descarga es un icono al final de la barra. */}
@@ -311,7 +329,13 @@ export default function ControlDerecho({
           style={{ borderColor: "var(--linea)", color: "var(--tinta-3)" }}
         >
           <IconoDescarga />
-          {soloDanos ? "Descargar las sedes con daño en CSV" : "Descargar la selección en CSV"}
+          {modoIes
+            ? (soloDanos
+              ? "Descargar las IES con daño en CSV"
+              : "Descargar la selección en CSV")
+            : (soloDanos
+              ? "Descargar las sedes con daño en CSV"
+              : "Descargar la selección en CSV")}
         </button>
 
         {/* El segundo botón, y no uno solo que cambie de destino. Con un botón

@@ -18,7 +18,7 @@ import FichaSede from "@/components/FichaSede";
 import { CAPAS_INICIALES } from "@/components/Mapa";
 import type { Capas } from "@/components/Mapa";
 import PanelIzquierdo, { TarjetaDanos } from "@/components/PanelIzquierdo";
-import { descarga } from "@/lib/csv";
+import { descarga, descargaIes } from "@/lib/csv";
 import {
   alumnos,
   cargaBordeGrilla,
@@ -38,15 +38,20 @@ import {
   danosFuera,
   danosVisibles,
   filtra,
+  filtraIes,
   indiceMarco,
   miles,
+  pasaIesDano,
+  pasaIesInventario,
   pideAtributos,
   resume,
+  resumeIes,
   sinCoordenada,
   sinRecorteDeBanda,
   resumeSin,
   sedesConDano,
   sinOcultas,
+  verIes,
 } from "@/lib/datos";
 import { FILTROS_INICIALES, SUBTIPOS, reportePorSede } from "@/lib/tipos";
 import type {
@@ -67,6 +72,7 @@ import type {
 
 const VACIAS: RasgoSede[] = [];
 const VACIO = resume([]);
+const VACIO_IES = resumeIes([]);
 
 // MapLibre toca `window` al importarse, asi que no puede renderizarse en el
 // servidor.
@@ -433,7 +439,43 @@ export default function Pagina() {
       danosPintados, capas.estadosDano, capas.subtipos),
     [danosPintados, capas.estadosDano, capas.subtipos],
   );
-  const resumenContado = soloDanos ? resumenDanos : resumen;
+
+  /** Educación superior. El número de la derecha cuenta las IES que el mapa
+   *  está mostrando: las 391 o las 33, y las dañadas van en la línea de
+   *  debajo. El ojo de sedes apaga el inventario; el de daños, los cuadrados
+   *  de color. */
+  const modoIes = verIes(filtros);
+  const recorteIes = useMemo(
+    () => ({
+      estadosDano: capas.estadosDano,
+      subtipos: capas.subtipos,
+      emisores: capas.emisores,
+      danosTodasLasBandas: capas.danosTodasLasBandas,
+    }),
+    [capas.estadosDano, capas.subtipos, capas.emisores,
+     capas.danosTodasLasBandas],
+  );
+  const iesInventario = useMemo(
+    () => (modoIes
+      ? filtraIes(ies, (p) => pasaIesInventario(p, filtros))
+      : []),
+    [modoIes, ies, filtros],
+  );
+  const iesConDano = useMemo(
+    () => (modoIes
+      ? filtraIes(ies, (p) => pasaIesDano(p, filtros, recorteIes))
+      : []),
+    [modoIes, ies, filtros, recorteIes],
+  );
+  const iesContadas = modoIes && !capas.sedes ? iesConDano : iesInventario;
+  const resumenIes = useMemo(
+    () => (modoIes ? resumeIes(iesContadas) : VACIO_IES),
+    [modoIes, iesContadas],
+  );
+
+  const resumenContado = modoIes
+    ? resumenIes
+    : (soloDanos ? resumenDanos : resumen);
 
   /** Las sedes del tramo resaltado, para poder bajarlas en CSV.
    *
@@ -702,25 +744,33 @@ export default function Pagina() {
         <div className={`pointer-events-auto w-full ${anchoDerecha}`}>
           <ControlDerecho
           resumen={resumenContado}
-          resalte={resalte
-            ? { n: sedesResaltadas.length, etiqueta: resalte.etiqueta }
-            : null}
-          onExportarResalte={resalte
-            ? () => descarga(sedesResaltadas)
-            : null}
-          sinCoordenada={sinCoord}
-          conDano={soloDanos ? resumenDanos.sedes : nConDano}
-          // Con la pantalla en modo solo daños el número grande ya es el total
-          // de sedes dibujadas con daño, así que no queda ninguna fuera y no hay
-          // nada que explicar.
-          conDanoFuera={soloDanos ? 0 : nRasgosConDano - nConDano}
-          soloDanos={soloDanos}
-          onExportar={() => descarga(
-            soloDanos
-              ? sedesConDano(coleccion, danosPintados, capas.estadosDano,
-                             capas.subtipos)
-              : sinOcultas(sedesMarco, danesOcultas),
-          )}
+          resalte={modoIes || !resalte
+            ? null
+            : { n: sedesResaltadas.length, etiqueta: resalte.etiqueta }}
+          onExportarResalte={modoIes || !resalte
+            ? null
+            : () => descarga(sedesResaltadas)}
+          sinCoordenada={modoIes ? { sedes: 0, matricula: 0 } : sinCoord}
+          conDano={modoIes
+            ? (capas.reportes
+              ? (capas.sedes ? iesConDano.length : resumenIes.sedes)
+              : 0)
+            : (soloDanos ? resumenDanos.sedes : nConDano)}
+          conDanoFuera={modoIes || soloDanos ? 0 : nRasgosConDano - nConDano}
+          soloDanos={modoIes ? !capas.sedes : soloDanos}
+          modoIes={modoIes}
+          onExportar={() => {
+            if (modoIes) {
+              descargaIes(iesContadas);
+              return;
+            }
+            descarga(
+              soloDanos
+                ? sedesConDano(coleccion, danosPintados, capas.estadosDano,
+                               capas.subtipos)
+                : sinOcultas(sedesMarco, danesOcultas),
+            );
+          }}
           />
         </div>
 

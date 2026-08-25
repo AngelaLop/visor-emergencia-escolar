@@ -11,7 +11,7 @@
  */
 
 import { diceCalidad } from "./datos";
-import type { RasgoSede } from "./tipos";
+import type { RasgoIes, RasgoSede } from "./tipos";
 
 const COLUMNAS: [string, (r: RasgoSede) => string | number][] = [
   ["dane", (r) => r.properties.dane],
@@ -87,6 +87,50 @@ export function descarga(rasgos: RasgoSede[]): void {
   const hoy = new Date().toISOString().slice(0, 10);
   a.href = url;
   a.download = `sedes_sismo_choco_${hoy}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+const COLUMNAS_IES: [string, (r: RasgoIes) => string | number][] = [
+  ["codigo_ies", (r) => r.properties.codigo_ies],
+  ["nombre", (r) => r.properties.nombre],
+  ["municipio", (r) => r.properties.mpio],
+  ["departamento", (r) => r.properties.depto],
+  ["secretaria", (r) => r.properties.secretaria ?? ""],
+  ["sector", (r) => r.properties.sector ?? ""],
+  ["caracter", (r) => r.properties.caracter ?? ""],
+  ["bid", (r) => (r.properties.bid ? "si" : "no")],
+  ["programas_vigentes", (r) => r.properties.programas_vigentes ?? ""],
+  ["mmi", (r) => (Number.isFinite(r.properties.mmi) ? r.properties.mmi! : "")],
+  ["dano_fuente", (r) => r.properties.dano_fuente ?? ""],
+  ["dano_emisor", (r) => r.properties.dano_emisor ?? ""],
+  ["dano_estado", (r) => r.properties.dano_estado ?? ""],
+  ["dano_cita", (r) => r.properties.dano_cita ?? ""],
+  ["dano_url", (r) => r.properties.dano_url ?? ""],
+  ["lon", (r) => r.geometry.coordinates[0]],
+  ["lat", (r) => r.geometry.coordinates[1]],
+];
+
+export function aCsvIes(rasgos: RasgoIes[]): string {
+  const orden = [...rasgos].sort(
+    (a, b) => a.properties.nombre.localeCompare(b.properties.nombre, "es"),
+  );
+  const lineas = [COLUMNAS_IES.map(([n]) => n).join(",")];
+  for (const r of orden) {
+    lineas.push(COLUMNAS_IES.map(([, f]) => campo(f(r))).join(","));
+  }
+  return lineas.join("\n");
+}
+
+export function descargaIes(rasgos: RasgoIes[]): void {
+  const blob = new Blob(["﻿" + aCsvIes(rasgos)], {
+    type: "text/csv;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const hoy = new Date().toISOString().slice(0, 10);
+  a.href = url;
+  a.download = `ies_sismo_choco_${hoy}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }

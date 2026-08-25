@@ -23,9 +23,14 @@
  *    rampa de intensidad.
  *  - La educacion superior es un cuadrado ocre, y el ocre no esta en ninguna de
  *    las otras rampas. La forma es lo que hace el trabajo: pin para la sede
- *    escolar, circulo para el reporte de dano, cuadrado para la IES. Hueco
- *    cuando el geocodificador solo pudo devolver el centro del municipio, que
- *    es el mismo recurso del pin hueco de la sede nunca encuestada.
+ *    escolar, cuadrado para la IES. Hueco cuando el geocodificador solo pudo
+ *    devolver el centro del municipio, que es el mismo recurso del pin hueco de
+ *    la sede nunca encuestada. Si la IES tiene reporte de dano, el cuadrado
+ *    deja el ocre y toma el color de quien lo afirma: azul oficial, magenta
+ *    noticia. Esa IES vive en la misma pregunta que los pines de dano escolar,
+ *    no en danos.json: no tiene codigo DANE.
+ *  - Al encender educacion superior se apagan las escuelas. Los dos simbolos
+ *    juntos no se leen.
  *  - Los danos reportados van en tres colores, uno por emisor, y los tres con
  *    halo blanco, que ninguna banda tiene. El color dice quien lo afirma. Ver
  *    COLOR_FUENTE.
@@ -41,7 +46,7 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef, useState } from "react";
 
-import { cargaHuellas, miles, sinRecorteDeBanda, TONO_IVID } from "@/lib/datos";
+import { cargaHuellas, miles, sinRecorteDeBanda, TONO_IVID, verIes } from "@/lib/datos";
 import {
   BANDAS,
   NOMBRE_EMISOR,
@@ -187,10 +192,10 @@ type Props = {
   /** El territorio de cada secretaria, un rasgo por entidad. Lo produce el
    *  script 44 y solo se dibuja el de las secretarias elegidas. */
   secretarias: ColeccionSecretarias | null;
-  /** Las 391 instituciones de educacion superior. Se dibujan solo con la
-   *  casilla "Educacion superior" marcada, y esa casilla es lo unico que las
-   *  decide: la banda de intensidad no las recorta. Ver `exporta_ies` en
-   *  `scripts/23_visor_datos.py`. */
+  /** Las 391 instituciones de educacion superior. El inventario ocre se dibuja
+   *  con la casilla de educacion superior. Las que tienen reporte de dano se
+   *  dibujan tambien con la capa de instituciones con dano, del color de quien
+   *  lo afirma. Ver `exporta_ies` en `scripts/23_visor_datos.py`. */
   ies: ColeccionIes | null;
   filtros: Filtros;
   capas: Capas;
@@ -523,28 +528,52 @@ function creaCuadro(color: string, hueco: boolean): ImageData {
   return x.getImageData(0, 0, c.width, c.height);
 }
 
-/** Si el mapa dibuja las instituciones de educacion superior.
+/** Que IES se dibujan.
  *
- * Lo decide una sola casilla del filtro de nivel y nada mas. La banda de
- * intensidad no entra: es la particion del inventario de sedes, y estas 391
- * instituciones no salen de ese inventario. */
-function verIes(f: Filtros): boolean {
-  return f.niveles.includes("superior") || f.niveles.includes("superior_bid");
-}
-
-/** Que IES se dibujan, de las que la capa tiene.
+ * `conDano` parte la misma fuente en dos capas: ocre las que no tienen
+ * reporte, del color de la fuente las que si. Asi un cuadrado no se pinta dos
+ * veces cuando coinciden la casilla de educacion superior y la de danos.
  *
- * Con "Educacion superior" marcada, todas. Con solo "Educacion superior - BID",
- * las 33 del prestamo. Con las dos, todas: la casilla mas amplia gana, que es
- * como se comportan las demas listas de este visor, y es lo unico que no
- * sorprende al marcar una segunda casilla.
+ * Secretaria, estado, emisor y (si se apaga "todas las bandas") intensidad
+ * recortan las que tienen dano, igual que recortan las escuelas danadas. El
+ * recorte BID solo aplica cuando la capa de educacion superior esta encendida
+ * y no esta marcada la casilla amplia: con la capa de danos sola se muestran
+ * todas las IES reportadas, que es lo que se pidio al prender esa capa.
  *
  * Va como filtro de capa y no rehaciendo la fuente, igual que las bandas y los
- * estados de dano: son 391 rasgos y volver a construir el GeoJSON en cada clic
- * haria parpadear el mapa sin ninguna ganancia. */
-function filtroIes(f: Filtros): Expr | undefined {
-  if (f.niveles.includes("superior")) return undefined;
-  return ["==", ["get", "bid"], true] as Expr;
+ * estados de dano. */
+function filtroIes(f: Filtros, c: Capas, conDano: boolean): Expr {
+  const partes: Expr[] = [];
+  if (conDano) {
+    partes.push(["has", "dano_fuente"] as Expr);
+  } else if (c.reportes) {
+    // Con la capa de daños prendida, las que tienen reporte van en `ies-dano`.
+    // Si esa capa se apaga, vuelven aquí, ocre, para que no desaparezcan.
+    partes.push(["!", ["has", "dano_fuente"]] as Expr);
+  }
+  if (verIes(f) && !f.niveles.includes("superior")) {
+    partes.push(["==", ["get", "bid"], true] as Expr);
+  }
+  if (f.secretarias.length) {
+    partes.push(["in", ["get", "secretaria"],
+      ["literal", f.secretarias]] as Expr);
+  }
+  if (conDano) {
+    const estados = c.estadosDano.filter((e) => e !== "sin_dano");
+    partes.push(["in", ["get", "dano_estado"], ["literal", estados]] as Expr);
+    partes.push(["any",
+      ["==", ["coalesce", ["get", "dano_subtipo"], ""], ""],
+      ["in", ["get", "dano_subtipo"], ["literal", c.subtipos]]] as Expr);
+    partes.push(["any",
+      ["==", ["coalesce", ["get", "dano_emisor"], ""], ""],
+      ["in", ["get", "dano_emisor"], ["literal", c.emisores]]] as Expr);
+    if (!c.danosTodasLasBandas && f.secretarias.length === 0) {
+      partes.push(["in", ["get", "banda"], ["literal", f.bandas]] as Expr);
+    }
+  }
+  if (partes.length === 0) return ["literal", true] as Expr;
+  if (partes.length === 1) return partes[0];
+  return ["all", ...partes] as Expr;
 }
 
 function creaPin(color: string, hueco: boolean): ImageData {
@@ -779,11 +808,17 @@ export default function Mapa({
       m.addImage(nombre, creaPin(c, false), { pixelRatio: 2 });
     }
     // Los dos cuadrados de la educacion superior. No dependen del color de sede
-    // ni del tema: son de otra capa y de otra fuente, y su color es fijo.
+    // ni del tema: son de otra capa y de otra fuente, y su color es fijo. Los
+    // de dano toman el color de quien lo afirma, igual que los pines escolares.
     for (const [nombre, hueco] of [["ies-lleno", false], ["ies-hueco", true]] as
       [string, boolean][]) {
       if (m.hasImage(nombre)) m.removeImage(nombre);
       m.addImage(nombre, creaCuadro(COLOR_IES, hueco), { pixelRatio: 2 });
+    }
+    for (const [f, c] of Object.entries(COLOR_FUENTE)) {
+      const nombre = `ies-${f}`;
+      if (m.hasImage(nombre)) m.removeImage(nombre);
+      m.addImage(nombre, creaCuadro(c, false), { pixelRatio: 2 });
     }
     // Un pin por tramo del indice de vulnerabilidad. La leyenda de la tarjeta
     // pinta cinco casillas de colores y el mapa tiene que pintar lo mismo, o la
@@ -1058,18 +1093,35 @@ export default function Mapa({
 
     // Educacion superior. Ver `creaCuadro`: cuadrado lleno cuando la coordenada
     // salio de una direccion, hueco cuando el geocodificador solo pudo dar el
-    // centro del municipio.
+    // centro del municipio. Las que tienen reporte de dano van en `ies-dano`,
+    // del color de la fuente, para no pintar dos simbolos en el mismo punto.
     m.addLayer({
       id: "ies-punto",
       type: "symbol",
       source: "ies",
-      ...(filtroIes(d.filtros) ? { filter: filtroIes(d.filtros) } : {}),
+      filter: filtroIes(d.filtros, d.capas, false),
       layout: {
-        visibility: visible(verIes(d.filtros)),
+        visibility: visible(verIes(d.filtros) && d.capas.sedes),
         "icon-image": ["case",
           ["==", ["get", "geo_precision"], "centroide_municipio"],
           "ies-hueco", "ies-lleno"] as Expr,
-        "icon-size": ["interpolate", ["linear"], ["zoom"], 5, 0.4, 9, 0.7, 14, 1],
+        "icon-size": ["interpolate", ["linear"], ["zoom"], 5, 0.65, 9, 1.05, 14, 1.45],
+        "icon-allow-overlap": true,
+      },
+    });
+    m.addLayer({
+      id: "ies-dano",
+      type: "symbol",
+      source: "ies",
+      filter: filtroIes(d.filtros, d.capas, true),
+      layout: {
+        visibility: visible(d.capas.reportes),
+        "icon-image": ["match", ["get", "dano_fuente"],
+          "oficial", "ies-oficial",
+          "noticia", "ies-noticia",
+          "hot", "ies-hot",
+          "ies-lleno"] as Expr,
+        "icon-size": ["interpolate", ["linear"], ["zoom"], 5, 0.65, 9, 1.05, 14, 1.45],
         "icon-allow-overlap": true,
       },
     });
@@ -1285,12 +1337,11 @@ export default function Mapa({
       // Las de sede y daño: el globo al pasar y la ficha al hacer clic.
       const capasFicha = ["danos-pin", "danos-punto", "danos-sin",
         "sedes-pin", "sedes-punto"];
-      // La de educación superior solo tiene globo. No hay ficha que abrir: de
-      // estas 391 instituciones no se sabe nada del estado físico, y una ficha
-      // con seis campos administrativos y ningún dato de daño prometería una
-      // profundidad que no existe. Lo que sí hay (nombre, dirección, sector,
-      // programas, confianza de la coordenada) cabe en el globo.
-      const capasIes = ["ies-punto"];
+      // La de educación superior solo tiene globo. No hay ficha que abrir: no
+      // son sedes del SIMAT y la ficha de la derecha habla de escuelas. Lo que
+      // sí hay (nombre, dirección, sector, programas, el reporte de daño si
+      // existe, confianza de la coordenada) cabe en el globo.
+      const capasIes = ["ies-punto", "ies-dano"];
       const capasClic = [...capasFicha, ...capasIes];
       for (const capa of capasFicha) {
         m.on("mouseenter", capa, () => (m.getCanvas().style.cursor = "pointer"));
@@ -1582,12 +1633,12 @@ export default function Mapa({
       m.setLayoutProperty(
         "sedes-realce",
         "visibility",
-        capas.sedes && porIvid ? "visible" : "none",
+        capas.sedes && porIvid && !verIes(filtros) ? "visible" : "none",
       );
       m.setLayoutProperty(
         "sedes-coord",
         "visibility",
-        filtros.resaltarCoordDudosa ? "visible" : "none",
+        filtros.resaltarCoordDudosa && !verIes(filtros) ? "visible" : "none",
       );
       m.setFilter("bandas", filtroBandas(filtros.bandas));
       m.setFilter("bandas-linea", filtroBandas(filtros.bandas));
@@ -1607,26 +1658,33 @@ export default function Mapa({
       if (!m.getLayer("bandas")) return;
       const ver = (capa: string, on: boolean) =>
         m.setLayoutProperty(capa, "visibility", on ? "visible" : "none");
+      const escuelas = capas.sedes && !verIes(filtros);
+      const danosEscolares = capas.reportes && !verIes(filtros);
       ver("bandas", capas.intensidad);
       ver("bandas-linea", capas.intensidad);
       ver("borde-grilla", capas.intensidad && seCortaEnElBorde(filtros.bandas));
-      ver("sedes-punto", capas.sedes);
-      ver("sedes-pin", capas.sedes);
-      ver("sedes-realce", capas.sedes && pintaPorIvid(filtros));
+      ver("sedes-punto", escuelas);
+      ver("sedes-pin", escuelas);
+      ver("sedes-realce", escuelas && pintaPorIvid(filtros));
       ver("territorio", capas.territorio);
-      ver("danos-punto", capas.reportes);
-      ver("danos-pin", capas.reportes);
-      ver("danos-sin", capas.reportes);
-      ver("danos-resalte", capas.reportes);
-      ver("huellas-relleno", capas.huellas);
-      ver("huellas-linea", capas.huellas);
-      // No tiene fila propia con ojo en el panel: la enciende y la apaga la
-      // casilla "Educación superior" del filtro de nivel.
-      ver("ies-punto", verIes(filtros));
-      // El recorte del BID vive aqui y no en la visibilidad: la capa esta
-      // encendida en los dos casos y lo que cambia es cuantos cuadrados pinta.
-      // `undefined` limpia el filtro, que es como se vuelve a las 391.
-      m.setFilter("ies-punto", filtroIes(filtros));
+      ver("danos-punto", danosEscolares);
+      ver("danos-pin", danosEscolares);
+      ver("danos-sin", danosEscolares);
+      ver("danos-resalte", danosEscolares);
+      ver("huellas-relleno", capas.huellas && !verIes(filtros));
+      ver("huellas-linea", capas.huellas && !verIes(filtros));
+      // Inventario ocre: casilla de educación superior. Daño de IES: esa misma
+      // casilla o la capa de instituciones con daño. Las escuelas se apagan
+      // cuando las IES están prendidas, porque los dos símbolos juntos no se
+      // leen.
+      ver("ies-punto", verIes(filtros) && capas.sedes);
+      ver("ies-dano", capas.reportes);
+      if (m.getLayer("ies-punto")) {
+        m.setFilter("ies-punto", filtroIes(filtros, capas, false));
+      }
+      if (m.getLayer("ies-dano")) {
+        m.setFilter("ies-dano", filtroIes(filtros, capas, true));
+      }
     });
   }, [capas.intensidad, capas.sedes, capas.territorio, capas.reportes,
       capas.huellas, filtros, generacion]);
@@ -1659,9 +1717,15 @@ export default function Mapa({
         m.setFilter("danos-resalte",
                     filtroResalte(capas, resalte ? [...resalte.danes] : null));
       }
+      if (m.getLayer("ies-punto")) {
+        m.setFilter("ies-punto", filtroIes(filtros, capas, false));
+      }
+      if (m.getLayer("ies-dano")) {
+        m.setFilter("ies-dano", filtroIes(filtros, capas, true));
+      }
     });
   }, [capas.estadosDano, capas.subtipos, capas.emisores,
-      capas.danosTodasLasBandas, capas, resalte, generacion]);
+      capas.danosTodasLasBandas, capas, resalte, generacion, filtros]);
 
   /** El resalte: apagar el resto y volver a dibujar encima las elegidas.
    *
@@ -1841,6 +1905,19 @@ function textoIes(p: Record<string, unknown>): string {
   const programas = p.programas_vigentes == null
     ? ""
     : `<span class="num">${miles(Number(p.programas_vigentes))}</span> programas vigentes<br>`;
+  let fisico = "<em>Sin datos de estado físico.</em>";
+  if (p.dano_fuente) {
+    const cita = p.dano_cita ? `<em>${p.dano_cita}</em><br>` : "";
+    const emisor = String(p.dano_emisor ?? "");
+    const quien = (emisor && NOMBRE_EMISOR[emisor])
+      ? NOMBRE_EMISOR[emisor]
+      : NOMBRE_FUENTE[String(p.dano_fuente) as keyof typeof NOMBRE_FUENTE] ?? "";
+    const estado = nombreFino(
+      p.dano_estado as EstadoDano,
+      String(p.dano_subtipo ?? ""),
+    );
+    fisico = `${quien}: <strong>${estado}</strong><br>${cita}`;
+  }
   return (
     `<strong>${p.nombre}</strong><br>${p.mpio}, ${p.depto}<br>` +
     `${p.caracter ?? ""}, ${String(p.sector ?? "").toLowerCase()}` +
@@ -1848,8 +1925,8 @@ function textoIes(p: Record<string, unknown>): string {
     (p.direccion ? `${p.direccion}<br>` : "") +
     programas +
     `${mmi}<br>` +
-    `<em>${DICE_GEO[prec] ?? "Ubicación geocodificada"}${puntaje}. ` +
-    `Sin datos de estado físico.</em>`
+    fisico +
+    `<em>${DICE_GEO[prec] ?? "Ubicación geocodificada"}${puntaje}.</em>`
   );
 }
 

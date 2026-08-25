@@ -15,7 +15,9 @@ import type {
   EstadoDano,
   Evento,
   Filtros,
+  Ies,
   MetaMen,
+  RasgoIes,
   RasgoSede,
   Reporte,
   Sede,
@@ -185,9 +187,9 @@ export function sinNivel(rasgos: RasgoSede[]): number {
  * Tres reglas, y las tres siguen la misma línea que el resto de los filtros:
  *
  *  - Sin ninguna casilla marcada no recorta nada.
- *  - Con solo una casilla de educación superior marcada no pasa ninguna sede. No
- *    es un caso raro: es la pregunta "muéstrame las universidades" dicha entera,
- *    y la respuesta correcta es el mapa con las IES y sin escuelas.
+ *  - Con cualquier casilla de educación superior marcada no pasa ninguna sede.
+ *    Pin de escuela y cuadrado de universidad juntos no se leen: el mapa pasa
+ *    a ser de IES. Da igual que también esté marcada básica o media.
  *  - Una sede sin nivel declarado queda fuera en cuanto se marca cualquier
  *    nivel escolar. Es la misma regla del quintil de riqueza y del índice de
  *    vulnerabilidad: no se puede afirmar que pertenezca a un nivel que nadie le
@@ -195,10 +197,66 @@ export function sinNivel(rasgos: RasgoSede[]): number {
  */
 export function pasaNivel(s: Sede, f: Filtros): boolean {
   if (!f.niveles.length) return true;
-  const escolares = f.niveles.filter((n) => !NIVELES_SUPERIOR.includes(n));
-  if (!escolares.length) return false;
+  if (f.niveles.some((n) => NIVELES_SUPERIOR.includes(n))) return false;
   if (!s.niveles) return false;
-  return escolares.some((n) => s.niveles!.includes(LETRA_NIVEL[n]));
+  return f.niveles.some((n) => s.niveles!.includes(LETRA_NIVEL[n]));
+}
+
+/** Si el mapa está en educación superior. Ahí las escuelas no se pintan ni se
+ *  cuentan: el recorte de la derecha pasa a ser de IES. */
+export function verIes(f: Filtros): boolean {
+  return f.niveles.includes("superior") || f.niveles.includes("superior_bid");
+}
+
+/** Lo que recorta una IES con daño, aparte de la secretaría y el BID.
+ *
+ * Vive aquí y no en el mapa porque el contador de la derecha tiene que decir
+ * lo mismo que dibuja `filtroIes`. Si una casilla cambia allá y no acá, el
+ * número y el mapa se pelean. */
+export type RecorteDanoIes = {
+  estadosDano: EstadoDano[];
+  subtipos: string[];
+  emisores: string[];
+  danosTodasLasBandas: boolean;
+};
+
+function recortaBid(f: Filtros): boolean {
+  return verIes(f) && !f.niveles.includes("superior");
+}
+
+function pasaSecretariaIes(p: Ies, f: Filtros): boolean {
+  if (!f.secretarias.length) return true;
+  return f.secretarias.includes(p.secretaria ?? "");
+}
+
+/** El inventario ocre: las 391, o las 33 del préstamo. */
+export function pasaIesInventario(p: Ies, f: Filtros): boolean {
+  if (recortaBid(f) && !p.bid) return false;
+  return pasaSecretariaIes(p, f);
+}
+
+/** Las IES cuyo reporte gana y está prendido en la tarjeta de daños. */
+export function pasaIesDano(p: Ies, f: Filtros, c: RecorteDanoIes): boolean {
+  if (!p.dano_fuente || !p.dano_estado) return false;
+  if (recortaBid(f) && !p.bid) return false;
+  if (!pasaSecretariaIes(p, f)) return false;
+  if (p.dano_estado === "sin_dano" || !c.estadosDano.includes(p.dano_estado)) {
+    return false;
+  }
+  if (p.dano_subtipo && !c.subtipos.includes(p.dano_subtipo)) return false;
+  if (p.dano_emisor && !c.emisores.includes(p.dano_emisor)) return false;
+  if (!c.danosTodasLasBandas && f.secretarias.length === 0) {
+    if (p.banda == null || !f.bandas.includes(p.banda)) return false;
+  }
+  return true;
+}
+
+export function filtraIes(
+  col: ColeccionIes | null,
+  pasa: (p: Ies) => boolean,
+): RasgoIes[] {
+  if (!col) return [];
+  return col.features.filter((x) => pasa(x.properties));
 }
 
 export function pasa(
@@ -745,6 +803,44 @@ export function resume(rasgos: RasgoSede[]): Resumen {
   r.municipios = mpios.size;
   r.secretarias = etc.size;
   r.ividMedia = r.ividN ? r.ividMedia / r.ividN : 0;
+  return r;
+}
+
+/** El mismo resumen, contado sobre IES y no sobre sedes.
+ *
+ * `sedes` es el número de instituciones. `matricula` es la suma de programas
+ * vigentes: una IES no tiene matrícula SIMAT, y dejar ese campo en cero haría
+ * que el panel derecho dijera "0 estudiantes" debajo de un recorte que sí
+ * existe. El rótulo lo cambia `ControlDerecho` cuando `modoIes` está prendido.
+ */
+export function resumeIes(rasgos: RasgoIes[]): Resumen {
+  const mpios = new Set<string>();
+  const etc = new Set<string>();
+  const r: Resumen = {
+    sedes: rasgos.length,
+    matricula: 0,
+    matriculaDe2022: 0,
+    noOperan: 0,
+    ividN: 0,
+    ividMedia: 0,
+    ividPorCategoria: [0, 0, 0, 0, 0],
+    encuestadas: 0,
+    sinEnergia: 0,
+    matriculaSinEnergia: 0,
+    sinInternet: 0,
+    matriculaSinInternet: 0,
+    sinCoordVerificada: 0,
+    municipios: 0,
+    secretarias: 0,
+  };
+  for (const x of rasgos) {
+    const p = x.properties;
+    r.matricula += p.programas_vigentes ?? 0;
+    mpios.add(`${p.depto}|${p.mpio}`);
+    if (p.secretaria) etc.add(p.secretaria);
+  }
+  r.municipios = mpios.size;
+  r.secretarias = etc.size;
   return r;
 }
 
