@@ -6,8 +6,9 @@
  * informe, el problema esta aguas arriba y no aqui.
  */
 
-import { reportePorSede } from "./tipos";
+import { NIVELES, NIVELES_SUPERIOR, reportePorSede } from "./tipos";
 import type {
+  ColeccionIes,
   ColeccionSecretarias,
   ColeccionSedes,
   Dano,
@@ -146,7 +147,59 @@ export async function cargaHuellas(dane: string): Promise<unknown | null> {
   return r.json();
 }
 
+/** Las instituciones de educación superior. 233 kB, capa opcional.
+ *
+ * No bloquea la pantalla y su fallo no la rompe: si el archivo no está, la
+ * casilla de "Educación superior" no dibuja nada y el resto del visor sigue
+ * igual. Es la misma promesa de `cargaColombia` y `cargaSecretarias`.
+ */
+export async function cargaIes(): Promise<ColeccionIes | null> {
+  try {
+    const r = await fetch("datos/ies.geojson");
+    if (!r.ok) return null;
+    return (await r.json()) as ColeccionIes;
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------- filtrado --
+
+/** Las letras de los tres niveles que sí son un atributo de la sede. */
+const LETRA_NIVEL: Record<string, string> = Object.fromEntries(
+  NIVELES.filter((n) => n.letra).map((n) => [n.id, n.letra]),
+);
+
+/** Cuántas sedes de la colección no traen nivel declarado.
+ *
+ * Son las que entraron por el directorio del MEN y no están ni en el SIMAT 2022
+ * ni en el C-600 2024. Quedan fuera en cuanto se marca un nivel, y el panel
+ * dice cuántas son: un filtro que descarta en silencio escuelas de las que
+ * consta que se dañaron sería el peor de los dos errores posibles aquí. */
+export function sinNivel(rasgos: RasgoSede[]): number {
+  return rasgos.reduce((n, x) => n + (x.properties.niveles ? 0 : 1), 0);
+}
+
+/** Si la sede pasa el recorte de nivel educativo.
+ *
+ * Tres reglas, y las tres siguen la misma línea que el resto de los filtros:
+ *
+ *  - Sin ninguna casilla marcada no recorta nada.
+ *  - Con solo una casilla de educación superior marcada no pasa ninguna sede. No
+ *    es un caso raro: es la pregunta "muéstrame las universidades" dicha entera,
+ *    y la respuesta correcta es el mapa con las IES y sin escuelas.
+ *  - Una sede sin nivel declarado queda fuera en cuanto se marca cualquier
+ *    nivel escolar. Es la misma regla del quintil de riqueza y del índice de
+ *    vulnerabilidad: no se puede afirmar que pertenezca a un nivel que nadie le
+ *    declaró.
+ */
+export function pasaNivel(s: Sede, f: Filtros): boolean {
+  if (!f.niveles.length) return true;
+  const escolares = f.niveles.filter((n) => !NIVELES_SUPERIOR.includes(n));
+  if (!escolares.length) return false;
+  if (!s.niveles) return false;
+  return escolares.some((n) => s.niveles!.includes(LETRA_NIVEL[n]));
+}
 
 export function pasa(
   s: Sede,
@@ -203,6 +256,8 @@ export function pasa(
     const cat = categoriaIvid(s);
     if (cat == null || !f.ividCategorias.includes(cat)) return false;
   }
+
+  if (!pasaNivel(s, f)) return false;
 
   if (f.tab === "fisica") {
     if (f.fisica === "encuestadas" && !s.encuestada) return false;
@@ -821,6 +876,10 @@ export function pideAtributos(f: Filtros): boolean {
     || f.vigencias.length > 0
     || f.pties.length > 0
     || f.ividCategorias.length > 0
+    // El nivel educativo es un atributo mas, y de los que menos cubren: una
+    // sede que llega solo por el reporte de dano no esta en el SIMAT 2022 ni en
+    // el C-600 2024, que son las dos fuentes del nivel.
+    || f.niveles.length > 0
     || f.quintiles.length > 0
     || (f.tab === "fisica" && f.fisica !== "todas")
     || (f.tab === "servicios"
@@ -1018,11 +1077,12 @@ DÓNDE SACUDIÓ
 ShakeMap del USGS. Sismo de magnitud 7,4 a 5 km al este de San José del Palmar, calibrado con 2 estaciones sismológicas y 239 reportes de personas para todo el país. Es una estimación de la zona, no una medición en la escuela.
 
 REGISTROS ADMINISTRATIVOS, TODOS ANTERIORES AL SISMO
-SIMAT 2022. El directorio de las 52.823 sedes oficiales del país, con zona, matrícula y coordenada. Es el marco: todo lo demás se pega encima.
+SIMAT 2022. El directorio de las 52.823 sedes oficiales del país, con zona, matrícula y coordenada. Es el marco: todo lo demás se pega encima. De aquí y del C-600 sale el nivel educativo de cada sede, unidos: 45 sedes no están en ninguna de las dos y quedan sin nivel declarado.
 CIMA. Control de calidad de la coordenada: cuáles están verificadas y cuáles caen en otro municipio.
 C-600 del DANE, 2024. Energía, internet, matrícula y si la sede sigue operando. 25.425 sedes. No pregunta por agua en ninguno de sus años.
 Encuesta del FFIE, 2021 y 2022. Estado declarado por el rector de techos, muros y pisos, si hay agua y de dónde llega, y fotos de campo. 8.070 sedes.
 Censo de Población y Vivienda 2018 del DANE. Acueducto y alcantarillado de las viviendas del área censal donde cae la sede, no del colegio; el área mediana tiene 66 viviendas. 5.278 sedes, en los seis departamentos con microdato descargado.
 Índice de riqueza relativa de Meta. Quintiles nacionales del entorno, desde una grilla de 2,4 km. 21.346 sedes.
 Open Buildings de Google. La huella del edificio, desde el zoom 15.
-geoBoundaries 2020. El límite de los municipios de cada secretaría. Punteado porque es una referencia de hasta dónde mirar, no una frontera legal.`;
+geoBoundaries 2020. El límite de los municipios de cada secretaría. Punteado porque es una referencia de hasta dónde mirar, no una frontera legal.
+HECAA del Ministerio de Educación, consulta pública del SNIES. Las 391 instituciones de educación superior del país, con su domicilio declarado ante el SACES. El SNIES no publica coordenadas: las de este mapa las geocodificamos nosotros desde esa dirección, y cada punto dice con cuánta confianza. De ninguna de las 391 hay dato de daño, porque las fuentes que reportan daño solo cubren de preescolar a media.`;

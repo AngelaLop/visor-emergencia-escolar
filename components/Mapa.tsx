@@ -21,6 +21,11 @@
  *    violeta para la carencia de servicio y la rampa lila del indice de
  *    vulnerabilidad en la vista de visitadas. Ninguno de esos tonos esta en la
  *    rampa de intensidad.
+ *  - La educacion superior es un cuadrado ocre, y el ocre no esta en ninguna de
+ *    las otras rampas. La forma es lo que hace el trabajo: pin para la sede
+ *    escolar, circulo para el reporte de dano, cuadrado para la IES. Hueco
+ *    cuando el geocodificador solo pudo devolver el centro del municipio, que
+ *    es el mismo recurso del pin hueco de la sede nunca encuestada.
  *  - Los danos reportados van en tres colores, uno por emisor, y los tres con
  *    halo blanco, que ninguna banda tiene. El color dice quien lo afirma. Ver
  *    COLOR_FUENTE.
@@ -48,6 +53,7 @@ import {
 } from "@/lib/tipos";
 import type { EstadoDano } from "@/lib/tipos";
 import type {
+  ColeccionIes,
   ColeccionSecretarias,
   Dano,
   Evento,
@@ -181,6 +187,11 @@ type Props = {
   /** El territorio de cada secretaria, un rasgo por entidad. Lo produce el
    *  script 44 y solo se dibuja el de las secretarias elegidas. */
   secretarias: ColeccionSecretarias | null;
+  /** Las 391 instituciones de educacion superior. Se dibujan solo con la
+   *  casilla "Educacion superior" marcada, y esa casilla es lo unico que las
+   *  decide: la banda de intensidad no las recorta. Ver `exporta_ies` en
+   *  `scripts/23_visor_datos.py`. */
+  ies: ColeccionIes | null;
   filtros: Filtros;
   capas: Capas;
   mapaBase: MapaBase;
@@ -466,6 +477,76 @@ function pinIvid(): Expr {
  * combinacion son ocho archivos que habria que mantener sincronizados con la
  * paleta. Dibujarlos aqui deja el color en un solo sitio.
  */
+/** El color de la educacion superior.
+ *
+ * Ocre oscuro, que es un hueco real en la paleta: la rampa de intensidad va de
+ * verde a rojo, las sedes son grafito o la escala lila del indice, y los tres
+ * emisores de dano son cian, azul y magenta. Ninguno de esos tonos se confunde
+ * con este a la escala a la que se dibujan. */
+export const COLOR_IES = "#7a5024";
+
+/** El cuadrado de la IES. Con esquinas rectas, que es lo que la separa.
+ *
+ * El simbolo y no el color es lo que hace el trabajo. En este mapa la forma ya
+ * es un canal: pin con gorro para la sede escolar, circulo para el reporte de
+ * dano. Una universidad no es ninguna de las dos y por eso no puede llevar
+ * ninguno de los dos simbolos, por mucho que se le cambie el tono.
+ *
+ * `hueco` es la coordenada de poca confianza: la que el geocodificador no supo
+ * resolver a una direccion y devolvio como centro de municipio. Es el mismo
+ * recurso con el que el pin hueco marca la sede que nunca fue encuestada, y por
+ * el mismo motivo: no es un grado del dato, es la ausencia de una afirmacion.
+ */
+function creaCuadro(color: string, hueco: boolean): ImageData {
+  const R = 2;
+  const lado = 18;
+  const c = document.createElement("canvas");
+  c.width = lado * R;
+  c.height = lado * R;
+  const x = c.getContext("2d")!;
+  x.scale(R, R);
+  const m = 3;
+  const s = lado - m * 2;
+  if (hueco) {
+    x.fillStyle = "#ffffff";
+    x.fillRect(m, m, s, s);
+    x.strokeStyle = color;
+    x.lineWidth = 2.2;
+    x.strokeRect(m, m, s, s);
+  } else {
+    x.fillStyle = color;
+    x.fillRect(m, m, s, s);
+    x.strokeStyle = "#ffffff";
+    x.lineWidth = 1.4;
+    x.strokeRect(m, m, s, s);
+  }
+  return x.getImageData(0, 0, c.width, c.height);
+}
+
+/** Si el mapa dibuja las instituciones de educacion superior.
+ *
+ * Lo decide una sola casilla del filtro de nivel y nada mas. La banda de
+ * intensidad no entra: es la particion del inventario de sedes, y estas 391
+ * instituciones no salen de ese inventario. */
+function verIes(f: Filtros): boolean {
+  return f.niveles.includes("superior") || f.niveles.includes("superior_bid");
+}
+
+/** Que IES se dibujan, de las que la capa tiene.
+ *
+ * Con "Educacion superior" marcada, todas. Con solo "Educacion superior - BID",
+ * las 33 del prestamo. Con las dos, todas: la casilla mas amplia gana, que es
+ * como se comportan las demas listas de este visor, y es lo unico que no
+ * sorprende al marcar una segunda casilla.
+ *
+ * Va como filtro de capa y no rehaciendo la fuente, igual que las bandas y los
+ * estados de dano: son 391 rasgos y volver a construir el GeoJSON en cada clic
+ * haria parpadear el mapa sin ninguna ganancia. */
+function filtroIes(f: Filtros): Expr | undefined {
+  if (f.niveles.includes("superior")) return undefined;
+  return ["==", ["get", "bid"], true] as Expr;
+}
+
 function creaPin(color: string, hueco: boolean): ImageData {
   const R = 2; // densidad, para que no se vea pixelado
   const w = 26 * R;
@@ -528,6 +609,7 @@ export default function Mapa({
   secretarias,
   evento,
   sedes,
+  ies,
   danos,
   danesSeleccion,
   danesConReporte,
@@ -564,11 +646,11 @@ export default function Mapa({
   // Cambiar de tema recarga el estilo entero y con el se van todas las fuentes,
   // asi que hay que poder volver a montarlas con los datos que hubiera.
   const datos = useRef({ contornos, bordeGrilla, colombia, secretarias, sedes,
-    danos, danesSeleccion, danesConReporte, danesConPin, filtros, capas, tema,
-    controlesIzquierda });
+    ies, danos, danesSeleccion, danesConReporte, danesConPin, filtros, capas,
+    tema, controlesIzquierda });
   datos.current = { contornos, bordeGrilla, colombia, secretarias, sedes,
-    danos, danesSeleccion, danesConReporte, danesConPin, filtros, capas, tema,
-    controlesIzquierda };
+    ies, danos, danesSeleccion, danesConReporte, danesConPin, filtros, capas,
+    tema, controlesIzquierda };
   const alClic = useRef(onSeleccion);
   alClic.current = onSeleccion;
 
@@ -696,6 +778,13 @@ export default function Mapa({
       if (m.hasImage(nombre)) m.removeImage(nombre);
       m.addImage(nombre, creaPin(c, false), { pixelRatio: 2 });
     }
+    // Los dos cuadrados de la educacion superior. No dependen del color de sede
+    // ni del tema: son de otra capa y de otra fuente, y su color es fijo.
+    for (const [nombre, hueco] of [["ies-lleno", false], ["ies-hueco", true]] as
+      [string, boolean][]) {
+      if (m.hasImage(nombre)) m.removeImage(nombre);
+      m.addImage(nombre, creaCuadro(COLOR_IES, hueco), { pixelRatio: 2 });
+    }
     // Un pin por tramo del indice de vulnerabilidad. La leyenda de la tarjeta
     // pinta cinco casillas de colores y el mapa tiene que pintar lo mismo, o la
     // leyenda no es leyenda de nada.
@@ -739,6 +828,14 @@ export default function Mapa({
     m.addSource("danos", {
       type: "geojson",
       data: { type: "FeatureCollection", features: rasgosDano() } as never,
+    });
+    // Sembrada con lo que haya llegado. `ies.geojson` entra fuera del grupo
+    // bloqueante, asi que al montar las capas puede estar todavia en vuelo, y
+    // el efecto de mas abajo la rellena cuando aterrice.
+    m.addSource("ies", {
+      type: "geojson",
+      data: { type: "FeatureCollection",
+              features: d.ies?.features ?? [] } as never,
     });
 
     const visible = (on: boolean): "visible" | "none" =>
@@ -959,6 +1056,24 @@ export default function Mapa({
       },
     });
 
+    // Educacion superior. Ver `creaCuadro`: cuadrado lleno cuando la coordenada
+    // salio de una direccion, hueco cuando el geocodificador solo pudo dar el
+    // centro del municipio.
+    m.addLayer({
+      id: "ies-punto",
+      type: "symbol",
+      source: "ies",
+      ...(filtroIes(d.filtros) ? { filter: filtroIes(d.filtros) } : {}),
+      layout: {
+        visibility: visible(verIes(d.filtros)),
+        "icon-image": ["case",
+          ["==", ["get", "geo_precision"], "centroide_municipio"],
+          "ies-hueco", "ies-lleno"] as Expr,
+        "icon-size": ["interpolate", ["linear"], ["zoom"], 5, 0.4, 9, 0.7, 14, 1],
+        "icon-allow-overlap": true,
+      },
+    });
+
     // El color dice quien lo afirma, y es lo unico que dice el simbolo. La
     // gravedad se pregunta con las casillas de la tarjeta de danos, no mirando
     // el mapa: un canal que no tiene leyenda no comunica, confunde.
@@ -1167,9 +1282,17 @@ export default function Mapa({
     m.on("load", () => {
       montaCapas(m);
 
-      const capasClic = ["danos-pin", "danos-punto", "danos-sin",
+      // Las de sede y daño: el globo al pasar y la ficha al hacer clic.
+      const capasFicha = ["danos-pin", "danos-punto", "danos-sin",
         "sedes-pin", "sedes-punto"];
-      for (const capa of capasClic) {
+      // La de educación superior solo tiene globo. No hay ficha que abrir: de
+      // estas 391 instituciones no se sabe nada del estado físico, y una ficha
+      // con seis campos administrativos y ningún dato de daño prometería una
+      // profundidad que no existe. Lo que sí hay (nombre, dirección, sector,
+      // programas, confianza de la coordenada) cabe en el globo.
+      const capasIes = ["ies-punto"];
+      const capasClic = [...capasFicha, ...capasIes];
+      for (const capa of capasFicha) {
         m.on("mouseenter", capa, () => (m.getCanvas().style.cursor = "pointer"));
         m.on("mouseleave", capa, () => {
           m.getCanvas().style.cursor = "";
@@ -1199,6 +1322,25 @@ export default function Mapa({
           if (!f) return;
           alClic.current(String((f.properties as Record<string, unknown>).dane ?? ""));
         });
+      }
+
+      for (const capa of capasIes) {
+        m.on("mouseenter", capa, () => (m.getCanvas().style.cursor = "pointer"));
+        m.on("mouseleave", capa, () => {
+          m.getCanvas().style.cursor = "";
+          emergente.remove();
+        });
+        m.on("mousemove", capa, (e) => {
+          const f = e.features?.[0];
+          if (!f) return;
+          emergente.setLngLat(e.lngLat)
+            .setHTML(textoIes(f.properties as Record<string, unknown>))
+            .addTo(m);
+        });
+        // Sin `click`. Un clic sobre una IES cae en el manejador general de
+        // abajo, que limpia la selección: es lo correcto, porque la ficha de la
+        // derecha habla de sedes escolares y dejarla abierta con una
+        // universidad debajo del cursor diría que la ficha es de ella.
       }
 
       m.on("click", (e) => {
@@ -1478,9 +1620,26 @@ export default function Mapa({
       ver("danos-resalte", capas.reportes);
       ver("huellas-relleno", capas.huellas);
       ver("huellas-linea", capas.huellas);
+      // No tiene fila propia con ojo en el panel: la enciende y la apaga la
+      // casilla "Educación superior" del filtro de nivel.
+      ver("ies-punto", verIes(filtros));
+      // El recorte del BID vive aqui y no en la visibilidad: la capa esta
+      // encendida en los dos casos y lo que cambia es cuantos cuadrados pinta.
+      // `undefined` limpia el filtro, que es como se vuelve a las 391.
+      m.setFilter("ies-punto", filtroIes(filtros));
     });
   }, [capas.intensidad, capas.sedes, capas.territorio, capas.reportes,
       capas.huellas, filtros, generacion]);
+
+  // La colección de IES llega fuera del grupo bloqueante de `page.tsx`, así que
+  // puede aterrizar después de que las capas estén montadas.
+  useEffect(() => {
+    cuandoListo((m) => {
+      const f = m.getSource("ies") as maplibregl.GeoJSONSource | undefined;
+      f?.setData({ type: "FeatureCollection",
+                   features: ies?.features ?? [] } as never);
+    });
+  }, [ies, generacion]);
 
   useEffect(() => {
     cuandoListo((m) => {
@@ -1656,6 +1815,41 @@ function textoDano(p: Record<string, unknown>): string {
     `${fuente}: <strong>${estado}</strong><br>` +
     `<span class="num">${miles(Number(p.matricula))}</span> estudiantes<br>` +
     alcance
+  );
+}
+
+/** Cómo se salió esta coordenada, dicho con palabras y no con un puntaje.
+ *
+ * "Puntaje 93,9" no le dice nada a nadie. Lo que hay que poder leer es si el
+ * punto está sobre una dirección o sobre el centro del pueblo, porque de eso
+ * depende si tiene sentido acercarse a mirarlo. */
+const DICE_GEO: Record<string, string> = {
+  calle: "Ubicada por su dirección",
+  centroide: "Ubicación aproximada",
+  incierto: "Ubicación poco precisa",
+  centroide_municipio: "Sin dirección resuelta: el punto es el centro del municipio",
+};
+
+function textoIes(p: Record<string, unknown>): string {
+  const prec = String(p.geo_precision ?? "");
+  const puntaje = p.geo_score == null
+    ? ""
+    : ` (puntaje ${Number(p.geo_score).toFixed(1).replace(".", ",")})`;
+  const mmi = p.mmi == null
+    ? "Fuera de la grilla del ShakeMap"
+    : `Intensidad MMI ${Number(p.mmi).toFixed(2).replace(".", ",")}`;
+  const programas = p.programas_vigentes == null
+    ? ""
+    : `<span class="num">${miles(Number(p.programas_vigentes))}</span> programas vigentes<br>`;
+  return (
+    `<strong>${p.nombre}</strong><br>${p.mpio}, ${p.depto}<br>` +
+    `${p.caracter ?? ""}, ${String(p.sector ?? "").toLowerCase()}` +
+    `${p.bid ? " · <strong>CO-L1288</strong>" : ""}<br>` +
+    (p.direccion ? `${p.direccion}<br>` : "") +
+    programas +
+    `${mmi}<br>` +
+    `<em>${DICE_GEO[prec] ?? "Ubicación geocodificada"}${puntaje}. ` +
+    `Sin datos de estado físico.</em>`
   );
 }
 

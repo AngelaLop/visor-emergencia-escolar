@@ -28,6 +28,7 @@ import {
   cargaDanos,
   cargaReportes,
   cargaSecretarias,
+  cargaIes,
   cargaSedes,
   consultaEdicionMen,
   cuentaDanosMarcados,
@@ -49,6 +50,7 @@ import {
 } from "@/lib/datos";
 import { FILTROS_INICIALES, SUBTIPOS, reportePorSede } from "@/lib/tipos";
 import type {
+  ColeccionIes,
   ColeccionSecretarias,
   ColeccionSedes,
   Dano,
@@ -83,6 +85,7 @@ export default function Pagina() {
   const [contornos, setContornos] = useState<unknown | null>(null);
   const [bordeGrilla, setBordeGrilla] = useState<unknown | null>(null);
   const [colombia, setColombia] = useState<unknown | null>(null);
+  const [ies, setIes] = useState<ColeccionIes | null>(null);
   // El territorio de cada secretaria, para dibujarlo al elegir una. Puede faltar
   // sin que el mapa deje de funcionar: lo unico que se pierde es la linea.
   const [territorios, setTerritorios] =
@@ -162,6 +165,7 @@ export default function Pagina() {
     cargaColombia().then(setColombia).catch(() => {});
     cargaReportes().then((r) => setReportes(r as Reporte[])).catch(() => {});
     cargaSecretarias().then(setTerritorios).catch(() => {});
+    cargaIes().then(setIes).catch(() => {});
 
     const guardado = localStorage.getItem("visor.mapa") as MapaBase | null;
     if (guardado) setMapaBase(guardado);
@@ -644,6 +648,7 @@ export default function Pagina() {
         secretarias={territorios}
         evento={evento}
         sedes={sedesMarco}
+        ies={ies}
         danesConPin={danesConPin}
         danos={danosEnMapa}
         danesSeleccion={danesSeleccion}

@@ -14,13 +14,13 @@
  * números de la pantalla dejarían de hablar del mismo territorio.
  */
 
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import CaracteristicasAfectadas from "@/components/CaracteristicasAfectadas";
 import { TarjetaMapaBase } from "@/components/ControlDerecho";
 import { MarcaGitHub } from "@/components/Iconos";
 import { Info, Tarjeta } from "@/components/Piezas";
-import { COLOR_BANDA, COLOR_FUENTE, svgEpicentro } from "@/components/Mapa";
+import { COLOR_BANDA, COLOR_FUENTE, COLOR_IES, svgEpicentro } from "@/components/Mapa";
 import type { Capas } from "@/components/Mapa";
 import {
   FICHA_IVID,
@@ -34,6 +34,7 @@ import {
   danoMarcado,
   danosMarcados,
   horaLocal,
+  sinNivel,
   sinRecorteDeBanda,
   miles,
 } from "@/lib/datos";
@@ -48,6 +49,8 @@ import {
   NOMBRE_ESTADO,
   EMISOR_CORTO,
   NOMBRE_FUENTE,
+  NIVELES,
+  NIVELES_SUPERIOR,
   NOMBRE_SUBTIPO,
   PRECEDENCIA_FUENTE,
   SUBTIPOS_POR_ESTADO,
@@ -62,6 +65,7 @@ import type {
   FuenteDano,
   MapaBase,
   MetaMen,
+  NivelEducativo,
   RasgoSede,
   Reporte,
   Resalte,
@@ -1397,12 +1401,36 @@ function TarjetaCapas({
   // sobre seis casillas en blanco, la seccion ocupa media columna para decir
   // que no se esta preguntando nada por la sacudida.
   const [intensidadAbierta, setIntensidadAbierta] = useState(false);
+  // Plegada, por lo mismo que la de intensidad: abre sin ninguna casilla
+  // marcada, y cuatro casillas en blanco no dicen nada que la fila no diga ya.
+  const [nivelesAbierta, setNivelesAbierta] = useState(false);
   const [masFiltros, setMasFiltros] = useState(false);
   const set = (p: Partial<Filtros>) => onFiltros({ ...filtros, ...p });
   const alternaLista = (lista: string[], v: string) =>
     lista.includes(v) ? lista.filter((x) => x !== v) : [...lista, v];
 
   const conSecretaria = filtros.secretarias.length > 0;
+
+  // Cuantas de las sedes que el mapa puede dibujar no traen nivel declarado.
+  // Se cuenta sobre la coleccion entera y no sobre lo filtrado: es una
+  // propiedad del dato y no del recorte del momento, y cambiaria de valor cada
+  // vez que alguien tocara otra casilla.
+  const sinNivelEnMarco = useMemo(() => sinNivel(sedes), [sedes]);
+
+  // Si lo unico marcado es educacion superior, el mapa se queda sin escuelas y
+  // la nota al pie tiene que decir eso y no explicar de donde sale el nivel de
+  // una sede que no se esta dibujando.
+  const soloSuperior = filtros.niveles.length > 0
+    && filtros.niveles.every((n) => NIVELES_SUPERIOR.includes(n));
+
+  /** Marca o desmarca un nivel. Llega el nombre en pantalla y sale el id. */
+  const eligeNivel = (nombre: string) => {
+    const n = NIVELES.find((x) => x.nombre === nombre);
+    if (!n) return;
+    set({ niveles: filtros.niveles.includes(n.id)
+      ? filtros.niveles.filter((x) => x !== n.id)
+      : [...filtros.niveles, n.id] });
+  };
 
   /** Elegir una secretaria cambia a que pregunta responde la pantalla.
    *
@@ -1603,6 +1631,73 @@ function TarjetaCapas({
                 capas={capas}
                 onCapas={onCapas}
               />
+            </div>
+          )}
+
+          {/* Nivel educativo. Cuelga de las sedes porque las tres primeras
+              casillas son un recorte sobre ellas, igual que los siete filtros
+              de arriba. La cuarta no: "Educación superior" enciende otra capa,
+              que sale de otra fuente y no tiene código DANE de sede.
+
+              Esta fila no lleva ojo. Las otras tres del panel lo tienen porque
+              cada una manda sobre un dibujo que se puede apagar; aquí el dibujo
+              que se apaga y se prende es el de las IES, y esa decisión ya la
+              toma su propia casilla. Un ojo al lado sería el mismo interruptor
+              dos veces. */}
+          <FilaCapa
+            nombre="Nivel educativo"
+            nota={resumeNiveles(filtros.niveles)}
+            // La muestra aparece con cualquiera de las dos casillas de
+            // educación superior, que son las únicas que ponen un símbolo nuevo
+            // en el mapa. Las otras tres recortan las sedes, y esas ya tienen su
+            // gota en la fila de arriba.
+            muestra={filtros.niveles.some((n) => NIVELES_SUPERIOR.includes(n))
+              ? <Cuadro color={COLOR_IES} /> : undefined}
+            plegada={!nivelesAbierta}
+            onPlegar={() => setNivelesAbierta(!nivelesAbierta)}
+          />
+          {nivelesAbierta && (
+            <div className="px-4 pb-2 pl-8">
+              <Desplegable
+                opciones={NIVELES.map((n) => n.nombre)}
+                notas={Object.fromEntries(NIVELES.map((n) => [n.nombre, n.nota]))}
+                elegidas={NIVELES.filter((n) => filtros.niveles.includes(n.id))
+                  .map((n) => n.nombre)}
+                onAlternar={eligeNivel}
+                onLimpiar={() => onFiltros({ ...filtros, niveles: [] })}
+                plural="niveles"
+                sinBuscador
+              />
+              <p
+                className="pt-1.5 text-[10px] leading-relaxed"
+                style={{ color: "var(--tinta-3)" }}
+              >
+                {soloSuperior ? (
+                  <>
+                    Solo educación superior: el mapa muestra{" "}
+                    {filtros.niveles.includes("superior")
+                      ? "las 391 instituciones del HECAA"
+                      : "las 33 del préstamo CO-L1288"}{" "}
+                    y ninguna escuela. Ninguna de ellas tiene reporte oficial de
+                    daño, porque el tablero del MEN y el de la Secretaría del
+                    Valle solo cubren de preescolar a media.
+                  </>
+                ) : (
+                  <>
+                    El nivel de la sede sale del SIMAT de 2022 y del servicio que
+                    declaró al C-600 de 2024, unidos.{" "}
+                    {sinNivelEnMarco > 0 && (
+                      <>
+                        {miles(sinNivelEnMarco)} sedes no están en ninguna de las
+                        dos y quedan fuera en cuanto se marca una casilla.{" "}
+                      </>
+                    )}
+                    Las instituciones de educación superior no son sedes del
+                    SIMAT: van en su propia capa y sus coordenadas están
+                    geocodificadas, no declaradas.
+                  </>
+                )}
+              </p>
             </div>
           )}
 
@@ -2327,6 +2422,21 @@ function Encabezado({
   );
 }
 
+/** Lo que dice la fila de nivel al lado del nombre cuando está plegada.
+ *
+ * Sin ninguna casilla no dice "todos" sino nada. El visor abre así, y una fila
+ * que anuncia "(todos)" se lee como si alguien lo hubiera elegido. */
+function resumeNiveles(elegidos: NivelEducativo[]): string | undefined {
+  if (!elegidos.length) return undefined;
+  // Sin pasar a minuscula: "Educación superior - BID" con la sigla en minuscula
+  // se lee como un error de escritura, y bajarle la caja solo a la primera
+  // palabra no vale la pena por un rotulo entre parentesis.
+  if (elegidos.length === 1) {
+    return NIVELES.find((n) => n.id === elegidos[0])?.nombre;
+  }
+  return `${elegidos.length} niveles`;
+}
+
 function FilaCapa({
   nombre,
   nota,
@@ -2342,8 +2452,13 @@ function FilaCapa({
   nota?: string;
   ayuda?: string;
   fuente?: { texto: string; url: string };
-  activa: boolean;
-  onAlternar: () => void;
+  /** Sin `onAlternar` la fila no lleva ojo y se dibuja siempre a plena
+   *  opacidad. Asi va la de nivel educativo, que no manda sobre ningun dibujo
+   *  propio: sus casillas recortan las sedes y una de ellas enciende la capa de
+   *  educacion superior, de modo que un ojo al lado seria el mismo interruptor
+   *  puesto dos veces. */
+  activa?: boolean;
+  onAlternar?: () => void;
   muestra?: React.ReactNode;
   plegada?: boolean;
   onPlegar?: () => void;
@@ -2352,7 +2467,7 @@ function FilaCapa({
     <>
       <div
         className="flex items-center gap-2 px-4 py-1.5 text-xs"
-        style={{ opacity: activa ? 1 : 0.45 }}
+        style={{ opacity: !onAlternar || activa ? 1 : 0.45 }}
       >
         {onPlegar ? (
           <button
@@ -2379,14 +2494,16 @@ function FilaCapa({
             mismo nivel. */}
         {onPlegar && muestra && <span className="shrink-0">{muestra}</span>}
         {ayuda && <Info texto={ayuda} fuente={fuente} />}
-        <button
-          onClick={onAlternar}
-          aria-label={activa ? "ocultar en el mapa" : "mostrar en el mapa"}
-          title={activa ? "ocultar en el mapa" : "mostrar en el mapa"}
-          style={{ color: "var(--tinta-3)" }}
-        >
-          {activa ? "◉" : "○"}
-        </button>
+        {onAlternar && (
+          <button
+            onClick={onAlternar}
+            aria-label={activa ? "ocultar en el mapa" : "mostrar en el mapa"}
+            title={activa ? "ocultar en el mapa" : "mostrar en el mapa"}
+            style={{ color: "var(--tinta-3)" }}
+          >
+            {activa ? "◉" : "○"}
+          </button>
+        )}
       </div>
     </>
   );
@@ -2481,17 +2598,30 @@ function Desplegable({
   elegidas,
   onAlternar,
   onLimpiar,
+  notas,
+  plural = "secretarías",
+  sinBuscador,
 }: {
   opciones: string[];
   elegidas: string[];
   onAlternar: (v: string) => void;
   onLimpiar: () => void;
+  /** Una linea corta bajo cada opcion. La usa el filtro de nivel, donde
+   *  "Basica" no dice por si solo que va de primero a noveno. */
+  notas?: Record<string, string>;
+  /** Como se nombra el conjunto cuando hay mas de uno elegido. Estuvo escrito
+   *  "secretarías" a mano aqui dentro, y el desplegable de nivel heredaba ese
+   *  rotulo y anunciaba "2 secretarías" al marcar basica y media. */
+  plural?: string;
+  /** Sin caja de busqueda. Con cuatro opciones a la vista, un buscador es un
+   *  control que nunca se usa y que ademas roba el primer clic. */
+  sinBuscador?: boolean;
 }) {
   const [abierto, setAbierto] = useState(false);
   const [busca, setBusca] = useState("");
-  const visibles = opciones.filter((o) =>
-    o.toLowerCase().includes(busca.toLowerCase()),
-  );
+  const visibles = sinBuscador
+    ? opciones
+    : opciones.filter((o) => o.toLowerCase().includes(busca.toLowerCase()));
 
   return (
     <div className="relative">
@@ -2505,7 +2635,7 @@ function Desplegable({
             ? "Todas"
             : elegidas.length === 1
               ? elegidas[0]
-              : `${elegidas.length} secretarías`}
+              : `${elegidas.length} ${plural}`}
         </span>
         <span style={{ color: "var(--tinta-3)" }}>{abierto ? "▲" : "▼"}</span>
       </button>
@@ -2515,25 +2645,38 @@ function Desplegable({
           className="absolute z-20 mt-1 w-full rounded border shadow-lg"
           style={{ background: "var(--superficie)", borderColor: "var(--borde)" }}
         >
-          <input
-            value={busca}
-            onChange={(e) => setBusca(e.target.value)}
-            placeholder="Buscar"
-            className="w-full border-b px-2 py-1.5 text-xs"
-            style={{ borderColor: "var(--linea)", background: "transparent" }}
-          />
+          {!sinBuscador && (
+            <input
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              placeholder="Buscar"
+              className="w-full border-b px-2 py-1.5 text-xs"
+              style={{ borderColor: "var(--linea)", background: "transparent" }}
+            />
+          )}
           <div className="max-h-48 overflow-y-auto p-1">
             {visibles.map((o) => (
               <label
                 key={o}
-                className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs"
+                className="flex cursor-pointer items-start gap-2 rounded px-1.5 py-1 text-xs"
               >
                 <input
                   type="checkbox"
+                  className="mt-0.5"
                   checked={elegidas.includes(o)}
                   onChange={() => onAlternar(o)}
                 />
-                <span>{o}</span>
+                <span className="min-w-0">
+                  {o}
+                  {notas?.[o] && (
+                    <span
+                      className="block text-[10px] leading-snug"
+                      style={{ color: "var(--tinta-3)" }}
+                    >
+                      {notas[o]}
+                    </span>
+                  )}
+                </span>
               </label>
             ))}
             {!visibles.length && (
@@ -2584,6 +2727,15 @@ function Mini({ n, matricula, texto }: { n: number; matricula: number; texto: st
         {miles(matricula)} estudiantes
       </div>
     </div>
+  );
+}
+
+/** El cuadrado de la IES, en chiquito, para la fila de nivel educativo. */
+function Cuadro({ color }: { color: string }) {
+  return (
+    <svg width="9" height="9" viewBox="0 0 12 12" aria-hidden="true">
+      <rect x="1" y="1" width="10" height="10" fill={color} />
+    </svg>
   );
 }
 

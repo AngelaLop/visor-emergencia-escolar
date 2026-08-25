@@ -101,6 +101,120 @@ export type Sede = {
    *  vivienda en la manzana de la sede, que suele pasar en manzana
    *  institucional, y hubo que subir un nivel. */
   nivel_entorno?: string;
+
+  /** Qué niveles educativos sirve la sede, como cadena de letras: `p` primera
+   *  infancia, `b` básica, `m` media, `c` CLEI. "pbm" es una sede que sirve los
+   *  tres. Las letras las escribe `LETRA_NIVEL` en `scripts/23_visor_datos.py`.
+   *
+   *  Ausente es sin dato, no es "ninguno". Son las 45 sedes que entraron por el
+   *  directorio del MEN y que no están ni en el SIMAT 2022 ni en el C-600 2024,
+   *  que son las dos fuentes de las que sale este campo. */
+  niveles?: string;
+};
+
+/** Los escalones del sistema educativo que el visor deja filtrar.
+ *
+ *  Los tres primeros son un recorte sobre las sedes: salen de `Sede.niveles`.
+ *  Los dos últimos no, y esa asimetría es del dato y no de la interfaz. Una
+ *  institución de educación superior no es una sede del SIMAT: no tiene código
+ *  DANE de doce dígitos, no fue encuestada por el FFIE y no tiene huella de
+ *  edificio. Vive en su propia colección, `ies.geojson`, y marcarla enciende esa
+ *  capa en vez de recortar la de sedes.
+ *
+ *  `superior_bid` es la misma capa recortada a las 33 del préstamo CO-L1288.
+ *  Es una casilla aparte y no un filtro dentro de la otra porque para el banco
+ *  esas 33 son el universo entero, no un subconjunto que haya que ir a buscar.
+ *  Con las dos marcadas mandan las 391: la más amplia gana, que es como se
+ *  comportan las demás listas de este visor. */
+export type NivelEducativo = "primera_infancia" | "basica" | "media"
+  | "superior" | "superior_bid";
+
+export const NIVELES: {
+  id: NivelEducativo;
+  /** La letra con la que viaja en `Sede.niveles`. Vacía en educación superior,
+   *  que no es una propiedad de la sede sino otra capa. */
+  letra: string;
+  nombre: string;
+  nota: string;
+}[] = [
+  {
+    id: "primera_infancia",
+    letra: "p",
+    nombre: "Primera infancia",
+    nota: "Preescolar: prejardín, jardín y transición",
+  },
+  { id: "basica", letra: "b", nombre: "Básica", nota: "Primero a noveno" },
+  { id: "media", letra: "m", nombre: "Media", nota: "Décimo y once" },
+  {
+    id: "superior",
+    letra: "",
+    nombre: "Educación superior",
+    nota: "391 instituciones del HECAA, capa aparte",
+  },
+  {
+    id: "superior_bid",
+    letra: "",
+    nombre: "Educación superior - BID",
+    nota: "Las 33 del préstamo CO-L1288",
+  },
+];
+
+/** Los niveles que no recortan sedes sino que encienden la capa de IES. */
+export const NIVELES_SUPERIOR: NivelEducativo[] = ["superior", "superior_bid"];
+
+/** Una institución de educación superior. La produce `exporta_ies` en
+ *  `scripts/23_visor_datos.py` a partir de los scripts 49 y 50.
+ *
+ *  Ninguna de estas coordenadas es oficial. El SNIES no publica geometría, así
+ *  que las 391 salieron de geocodificar la dirección del domicilio que la
+ *  institución declaró ante el SACES. Por eso el punto viaja siempre con
+ *  `geo_score` y `geo_precision`: el mapa tiene que poder decir cuánta
+ *  confianza merece cada uno.
+ *
+ *  Y ninguna trae estado físico. El tablero del MEN y el de la Secretaría del
+ *  Valle solo cubren de preescolar a media. */
+export type Ies = {
+  codigo_ies: number;
+  codigo_padre?: number;
+  nombre: string;
+  estado: string;
+  sector: string;
+  caracter: string;
+  principal_seccional?: string;
+  mpio: string;
+  depto: string;
+  direccion?: string;
+  web?: string;
+  programas_vigentes?: number;
+  acreditada?: boolean;
+  /** Si es una de las 33 del préstamo CO-L1288. */
+  bid?: boolean;
+  /** Si es seccional de una de esas 33, el código de la principal. */
+  bid_de?: number;
+  /** Puntaje de emparejamiento de ArcGIS, de 0 a 100. */
+  geo_score?: number;
+  /** `calle` (puntaje 95 o más), `centroide` (90 a 95), `incierto` (menos de
+   *  90) o `centroide_municipio`, que es cuando el geocodificador devolvió el
+   *  centro del pueblo y no una dirección. */
+  geo_precision?: string;
+  geo_aceptacion?: string;
+  /** Si la coordenada salió de la dirección, del nombre o del municipio. */
+  geo_consulta?: string;
+  /** Intensidad del sismo en ese punto. Ausente fuera de la grilla del USGS. */
+  mmi?: number;
+  banda?: number;
+  nivel?: string;
+};
+
+export type RasgoIes = {
+  type: "Feature";
+  properties: Ies;
+  geometry: { type: "Point"; coordinates: [number, number] };
+};
+
+export type ColeccionIes = {
+  type: "FeatureCollection";
+  features: RasgoIes[];
 };
 
 export type RasgoSede = {
@@ -650,6 +764,10 @@ export type Filtros = {
   pties: string[];
   /** Categorias del indice de vulnerabilidad, de 0 a 4. Ver `categoriaIvid`. */
   ividCategorias: number[];
+  /** Los niveles educativos marcados. Vacío es todos, como en los demás. Ver
+   *  `NivelEducativo`: los tres primeros recortan las sedes y el cuarto enciende
+   *  la capa de educación superior. */
+  niveles: NivelEducativo[];
   secretarias: string[];
   quintiles: number[];
   matriculaMin: number;
@@ -686,6 +804,11 @@ export const FILTROS_INICIALES: Filtros = {
   // Vacio es "todas las visitadas". El filtro aparece dentro de la vista de
   // visitadas, que es la unica donde todas las sedes en juego tienen indice.
   ividCategorias: [],
+  // Vacio es "todos los niveles", incluida la educacion superior, que sin
+  // ninguna casilla marcada no se dibuja. Es la unica de las cuatro que no
+  // recorta nada: enciende una capa. Abrir con ella prendida pondria 391 puntos
+  // encima del mapa antes de que nadie preguntara por universidades.
+  niveles: [],
   secretarias: [],
   quintiles: [],
   // Tres alumnos. Es un corte de ruido de registro y no una pregunta
