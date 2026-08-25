@@ -37,6 +37,7 @@ import {
   danosMarcados,
   danosFuera,
   danosVisibles,
+  enBandaEncendida,
   filtra,
   filtraIes,
   indiceMarco,
@@ -269,11 +270,9 @@ export default function Pagina() {
   // Los que de verdad se están dibujando, que es lo que tiene que contar el
   // contador de arriba a la derecha cuando la pantalla muestra solo daños.
   const danosPintados = useMemo(
-    () => (capas.danosTodasLasBandas
-      ? danosEnMapa
-      : danosEnMapa.filter(
-        (d) => d.banda != null && filtros.bandas.includes(d.banda))),
-    [danosEnMapa, capas.danosTodasLasBandas, filtros.bandas],
+    () => danosEnMapa.filter(
+      (d) => enBandaEncendida(d, filtros, capas.danosTodasLasBandas)),
+    [danosEnMapa, capas.danosTodasLasBandas, filtros],
   );
 
   /** Las sedes con reporte que el marco no tiene, para poder contarlas.
@@ -554,9 +553,15 @@ export default function Pagina() {
    * calcula el número de su encabezado. Es a propósito: las dos tarjetas son
    * hermanas y hablan de las mismas sedes, y con dos cálculos paralelos ya se
    * separaron antes en este visor. */
+  /** Los daños que describe la tarjeta de características.
+   *
+   * Recortados contra `indice.porDane`, que es el marco ya filtrado, igual que
+   * `nConDano`. Así la tarjeta habla de las mismas sedes que la cifra grande,
+   * que es lo que su texto de ayuda promete. */
   const marcadas = useMemo(
-    () => danosMarcados(danosPintados, capas.estadosDano, capas.subtipos),
-    [danosPintados, capas.estadosDano, capas.subtipos],
+    () => danosMarcados(danosPintados, capas.estadosDano, capas.subtipos,
+                        indice.porDane),
+    [danosPintados, capas.estadosDano, capas.subtipos, indice],
   );
 
   /** El directorio entero indexado por código DANE.

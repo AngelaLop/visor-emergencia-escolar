@@ -245,9 +245,7 @@ export function pasaIesDano(p: Ies, f: Filtros, c: RecorteDanoIes): boolean {
   }
   if (p.dano_subtipo && !c.subtipos.includes(p.dano_subtipo)) return false;
   if (p.dano_emisor && !c.emisores.includes(p.dano_emisor)) return false;
-  if (!c.danosTodasLasBandas && f.secretarias.length === 0) {
-    if (p.banda == null || !f.bandas.includes(p.banda)) return false;
-  }
+  if (!bandaEncendida(p.banda, f, c.danosTodasLasBandas)) return false;
   return true;
 }
 
@@ -946,6 +944,58 @@ export function sinRecorteDeBanda(f: Filtros): boolean {
   return f.secretarias.length > 0 || f.bandas.length === 0;
 }
 
+/** Si este reporte cae dentro del recorte de intensidad.
+ *
+ * Es la regla que decide si un daño se cuenta y se dibuja sólido, y hasta el 25
+ * de agosto de 2026 estaba escrita cuatro veces. Dos de las cuatro copias
+ * ignoraban `sinRecorteDeBanda`, y el efecto era el peor posible: al apagar "ver
+ * todas las sedes reportadas" con las bandas vacías, que es como abre el visor,
+ * los contadores caían a cero mientras el mapa seguía dibujando dos mil puntos.
+ * La pantalla decía 0 y enseñaba 2.000.
+ *
+ * Las tres condiciones, en orden:
+ *
+ *  1. `todasLasBandas`, la casilla de la tarjeta de daños. Encendida, el
+ *     recorte no aplica y todo reporte entra.
+ *  2. `sinRecorteDeBanda`. Con una secretaría elegida la banda deja de repartir
+ *     y solo pinta; y sin ninguna banda encendida no hay un dentro contra el
+ *     que contrastar. En los dos casos no hay recorte que aplicar.
+ *  3. La banda de la sede está entre las encendidas. Una sede sin banda nunca
+ *     pasa: son las que caen fuera de la grilla del ShakeMap, de las que el
+ *     modelo no dice nada, así que no pertenecen a ninguna selección.
+ *
+ * `todasLasBandas` va como parámetro y no se lee de `Filtros` porque vive en
+ * `Capas`. El mapa la pasa en `false` a propósito: allí la casilla la aplica
+ * `filtroDanos` sobre la capa, y `en_seleccion` tiene que seguir diciendo si el
+ * punto está dentro del recorte para poder atenuar el que no lo está.
+ */
+export function enBandaEncendida(
+  d: Dano,
+  f: Filtros,
+  todasLasBandas: boolean,
+): boolean {
+  return bandaEncendida(d.banda, f, todasLasBandas);
+}
+
+/** La misma regla, sobre el valor de banda a secas.
+ *
+ * Existe porque no solo la piden los daños de sede. Una IES trae su banda en
+ * `Ies.banda` y no es un `Dano`, y hasta el 25 de agosto de 2026 `pasaIesDano`
+ * llevaba su propia copia, que conocía la mitad de la excepción: miraba si
+ * había una secretaría elegida pero no si la lista de bandas estaba vacía. Con
+ * la casilla "ver todas las sedes reportadas" apagada y ninguna banda marcada,
+ * que es como abre el visor, esa copia rechazaba las once instituciones con
+ * daño y no se dibujaba ni una. */
+export function bandaEncendida(
+  banda: number | null | undefined,
+  f: Filtros,
+  todasLasBandas: boolean,
+): boolean {
+  if (todasLasBandas) return true;
+  if (sinRecorteDeBanda(f)) return true;
+  return banda != null && f.bandas.includes(banda);
+}
+
 /** Si algún filtro está preguntando por un atributo de la sede.
  *
  * Zona, vigencia, PTIES, vulnerabilidad, quintil, matrícula, y los de las dos
@@ -1000,9 +1050,20 @@ export function danosMarcados(
   danos: Dano[],
   estados: EstadoDano[],
   subtipos: string[],
+  /** El recorte de la izquierda, como conjunto de códigos DANE. Sin él la
+   *  lista es todo lo que el mapa dibuja; con él, lo que además sobrevive a los
+   *  filtros. Es el mismo parámetro y el mismo nombre que `cuentaDanosMarcados`,
+   *  para que las dos puedan recibir `indice.porDane` y decir el mismo número.
+   *
+   *  La tarjeta de características lo pasa desde el 25 de agosto de 2026. Antes
+   *  no, y por eso describía 2.046 sedes dijera lo que dijera el panel: marcar
+   *  "media" dejaba el contador en 676 y la tarjeta seguía en 2.046, hablando de
+   *  mil trescientas sedes que la pantalla ya no estaba contando. */
+  enMarco?: Set<string> | Map<string, unknown>,
 ): Dano[] {
   return [...reportePorSede(danos).values()]
-    .filter((d) => danoMarcado(d, estados, subtipos));
+    .filter((d) => danoMarcado(d, estados, subtipos))
+    .filter((d) => !enMarco || enMarco.has(d.dane));
 }
 
 /** Cuántos daños pintados están marcados y tienen coordenada.
@@ -1154,7 +1215,7 @@ export const FUENTES_DEL_VISOR = `Este visor permite identificar espacialmente y
 
 CÓMO SE USA
 Elija una secretaría: recorta las sedes, los daños y las cuentas de la derecha. Las casillas de daño deciden qué se dibuja, y su número cuenta exactamente los puntos del mapa.
-La tarjeta de características describe las sedes con daño dibujadas, no la selección de la pantalla. Al tocar un tramo se resalta en el mapa, recorta el bloque de "cómo están hoy" y se puede bajar en CSV.
+La tarjeta de características describe las sedes con daño que además pasan los filtros de la izquierda, que es lo mismo que cuenta la cifra grande. Al tocar un tramo se resalta en el mapa, recorta el bloque de "cómo están hoy" y se puede bajar en CSV.
 
 CÓMO LEERLO
 Una sede sin reporte no es una sede sin daño: nadie ha dicho nada de ella. La cobertura de las fuentes es muy desigual entre territorios.
@@ -1181,4 +1242,4 @@ Censo de Población y Vivienda 2018 del DANE. Acueducto y alcantarillado de las 
 Índice de riqueza relativa de Meta. Quintiles nacionales del entorno, desde una grilla de 2,4 km. 21.346 sedes.
 Open Buildings de Google. La huella del edificio, desde el zoom 15.
 geoBoundaries 2020. El límite de los municipios de cada secretaría. Punteado porque es una referencia de hasta dónde mirar, no una frontera legal.
-HECAA del Ministerio de Educación, consulta pública del SNIES. Las 391 instituciones de educación superior del país, con su domicilio declarado ante el SACES. El SNIES no publica coordenadas: las de este mapa las geocodificamos nosotros desde esa dirección, y cada punto dice con cuánta confianza. De ninguna de las 391 hay dato de daño, porque las fuentes que reportan daño solo cubren de preescolar a media.`;
+HECAA del Ministerio de Educación, consulta pública del SNIES. Las 391 instituciones de educación superior del país, con su domicilio declarado ante el SACES. El SNIES no publica coordenadas: las de este mapa las geocodificamos nosotros desde esa dirección, y cada punto dice con cuánta confianza. De 11 de las 391 hay dato de daño, y de ninguna de las otras 380. Las 11 salieron de prensa, salvo una del reporte del PTIES: ninguna fuente oficial de este visor cubre educación superior, porque el tablero del MEN y el de la Secretaría del Valle van de preescolar a media. Que una IES no aparezca reportada no dice nada sobre su estado.`;

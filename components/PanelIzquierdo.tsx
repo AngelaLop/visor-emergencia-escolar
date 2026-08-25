@@ -33,6 +33,7 @@ import {
   FUENTES_DEL_VISOR,
   danoMarcado,
   danosMarcados,
+  enBandaEncendida,
   horaLocal,
   sinNivel,
   sinRecorteDeBanda,
@@ -442,8 +443,7 @@ export function TarjetaDanos({
   // grilla del ShakeMap del USGS, donde no hay intensidad estimada de ningún
   // valor, así que no pertenecen a ninguna selección de bandas.
   const enBanda = (d: Dano) =>
-    capas.danosTodasLasBandas
-    || (d.banda != null && filtros.bandas.includes(d.banda));
+    enBandaEncendida(d, filtros, capas.danosTodasLasBandas);
   const danosDibujados = danos.filter(enBanda);
 
   const porFuente = (f: FuenteDano) =>

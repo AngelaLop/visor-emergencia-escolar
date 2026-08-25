@@ -46,7 +46,14 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef, useState } from "react";
 
-import { cargaHuellas, miles, sinRecorteDeBanda, TONO_IVID, verIes } from "@/lib/datos";
+import {
+  cargaHuellas,
+  enBandaEncendida,
+  sinRecorteDeBanda,
+  miles,
+  TONO_IVID,
+  verIes,
+} from "@/lib/datos";
 import {
   BANDAS,
   NOMBRE_EMISOR,
@@ -331,19 +338,32 @@ export type Capas = {
    * siquiera tienen banda, porque caen fuera de la grilla del ShakeMap. Sin esta
    * opción no había ningún camino para llegar a ellas.
    *
-   * Abre encendido desde el 21 de agosto de 2026. Estuvo apagado y el argumento
-   * era de dibujo: los puntos fuera de las bandas aparecían sobre el mapa base
-   * pelado, sin mancha debajo, y eso no se lee como "aquí hay un reporte que el
-   * modelo no explica" sino como que el mapa está mal. Ese argumento ya está
-   * atendido: lo de fuera del recorte se dibuja atenuado en vez de sólido, así
-   * que se distingue sin desaparecer.
+   * Abre apagado desde el 25 de agosto de 2026. Estuvo encendido desde el 21,
+   * y el argumento de entonces sigue en pie: con reportes oficiales de tres
+   * emisores, la intensidad dejó de ser la herramienta con la que se pronostica
+   * el daño y pasó a ser una característica más de la sede. Un mapa que abre
+   * escondiendo escuelas reportadas porque el modelo dice que ahí no sacudió
+   * fuerte tiene el orden al revés.
    *
-   * Lo que lo decidió es otra cosa. Con reportes oficiales de tres emisores, la
-   * intensidad dejó de ser la herramienta con la que se pronostica el daño y
-   * pasó a ser una característica más de la sede. Un mapa que abre escondiendo
-   * escuelas reportadas porque el modelo dice que ahí no sacudió fuerte tiene el
-   * orden al revés. Ver la casilla "ver todas las sedes reportadas" en la
-   * tarjeta de daños, que sigue existiendo para volver a apretar el recorte. */
+   * Lo que cambió es que ese argumento no necesita esta casilla para sostenerse.
+   * El visor abre sin ninguna banda encendida, y sin bandas no hay recorte que
+   * aplicar: `enBandaEncendida` en `lib/datos.ts` deja pasar todo. Así que en la
+   * pantalla de arranque no se esconde ni una sede reportada, que era lo que
+   * había que proteger, y la casilla queda libre para hacer lo único que le
+   * pedimos: decidir si las bandas recortan cuando alguien las enciende.
+   *
+   * Encendida seguía habiendo un problema y es el que la mandó a apagarse. La
+   * intensidad quedaba desconectada de todos los números de daño sin que nada lo
+   * dijera: se marcaban las seis bandas, se marcaba solo 6,0 y 6,5, y la cifra
+   * de la derecha se quedaba en 1.982 y la tarjeta de características en 2.046,
+   * las tres veces. Un control que no mueve ningún número se lee como un control
+   * roto. Apagada, esas mismas dos selecciones dan 1.982 y 1.033 en la cifra, y
+   * 2.003 y 1.042 en la tarjeta.
+   *
+   * Sigue existiendo para lo de siempre: hay reportes fuera de las bandas que
+   * uno enciende, y cinco sedes que ni siquiera tienen banda porque caen fuera
+   * de la grilla del ShakeMap. Encenderla es el camino para llegar a ellas, y lo
+   * que quede fuera del recorte se dibuja atenuado en vez de desaparecer. */
   danosTodasLasBandas: boolean;
   /** Cuales subtipos se dibujan, de los dos estados que tienen desglose.
    *
@@ -394,7 +414,7 @@ export const CAPAS_INICIALES: Capas = {
   reportes: true,
   huellas: true,
   estadosDano: ["colapso", "dano"],
-  danosTodasLasBandas: true,
+  danosTodasLasBandas: false,
   subtipos: SUBTIPOS,
   emisores: [...EMISORES],
 };
@@ -567,7 +587,11 @@ function filtroIes(f: Filtros, c: Capas, conDano: boolean): Expr {
     partes.push(["any",
       ["==", ["coalesce", ["get", "dano_emisor"], ""], ""],
       ["in", ["get", "dano_emisor"], ["literal", c.emisores]]] as Expr);
-    if (!c.danosTodasLasBandas && f.secretarias.length === 0) {
+    // `sinRecorteDeBanda` y no `secretarias.length === 0`: sin ninguna banda
+    // marcada tampoco hay recorte, y exigir estar en una lista vacía borraba
+    // del mapa las once IES con daño. Es la misma regla que `bandaEncendida`
+    // aplica del lado del contador.
+    if (!c.danosTodasLasBandas && !sinRecorteDeBanda(f)) {
       partes.push(["in", ["get", "banda"], ["literal", f.bandas]] as Expr);
     }
   }
@@ -702,11 +726,7 @@ export default function Mapa({
     // no dibujables. Sin este filtro entraban a la fuente GeoJSON con
     // `coordinates: [null, null]`, que MapLibre acepta sin quejarse y deja el
     // punto en un sitio que no existe.
-    const bandas = datos.current.filtros.bandas;
-    // La misma pregunta que hace la tarjeta de danos para decidir si ofrece la
-    // casilla de "ver todas las sedes reportadas". Una sola regla, en
-    // `lib/datos.ts`, porque las dos tienen que decir lo mismo.
-    const sinRecorte = sinRecorteDeBanda(datos.current.filtros);
+    const filtros = datos.current.filtros;
     return [...peor.values()].filter((d) => d.lon != null && d.lat != null)
       .map((d) => ({
       type: "Feature" as const,
@@ -749,8 +769,11 @@ export default function Mapa({
         // izquierda. Estaba solo la primera, asi que marcar "rural" recortaba
         // la cifra de la derecha a 1.252 mientras el mapa seguia dibujando los
         // 2.049 puntos, sin que nada dijera cuales eran los 1.252.
-        en_seleccion: (sinRecorte
-            || (d.banda != null && bandas.includes(d.banda)))
+        // `false` a proposito: la casilla "ver todas las sedes reportadas" la
+        // aplica `filtroDanos` sobre la capa, y aqui hace falta saber si el
+        // punto esta dentro del recorte aunque la casilla este encendida, que
+        // es lo que decide si se dibuja atenuado.
+        en_seleccion: enBandaEncendida(d, filtros, false)
           && datos.current.danesSeleccion.has(d.dane),
       },
       geometry: {
