@@ -1115,6 +1115,11 @@ export const CALIDAD_COORD: Record<string, string> = {
   // publica otra que sí cae dentro. La lista de cuáles y por qué está en
   // `COORDENADAS_CORREGIDAS`, en `scripts/20_base_maestra.py`.
   corregida_men: "corregida con la coordenada de la capa del MEN",
+  // Tampoco es una verificación en terreno. Alguien encontró la escuela sobre la
+  // imagen satelital y dejó escrito quién, cuándo y con qué la reconoció, en
+  // `COORDENADAS_CORREGIDAS`. La coordenada del directorio caía en otro
+  // departamento.
+  corregida_manual: "ubicada a mano sobre imagen satelital",
 };
 
 export function diceCalidad(c?: string): string {

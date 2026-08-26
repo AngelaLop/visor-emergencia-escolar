@@ -275,6 +275,16 @@ function filtroDanos(estados: EstadoDano[], todas: boolean,
   return todas ? base : (["all", base, ["get", "en_seleccion"]] as Expr);
 }
 
+/** El filtro de un halo de coordenada dudosa: no estar verificada con GPS y,
+ *  ademas, pasar el mismo filtro que la capa de simbolos que acompaña.
+ *
+ *  `null` significa que esa capa no filtra nada, y entonces el halo tampoco. */
+function sinVerificar(capa: Expr | null): Expr {
+  const dudosa: Expr =
+    ["!=", ["get", "calidad_coord"], "gps_validated"] as Expr;
+  return capa === null ? dudosa : (["all", dudosa, capa] as Expr);
+}
+
 /** Esconde del grafito las sedes que ya tienen pin de daño.
  *
  *  `null` cuando la lista va vacía: MapLibre entiende "sin filtro" y no
@@ -746,6 +756,7 @@ export default function Mapa({
         matricula: d.matricula,
         quien: d.quien,
         n_sedes_institucion: d.n_sedes_institucion ?? 1,
+        calidad_coord: d.calidad_coord ?? "",
         // Si la sede cae en las bandas de intensidad que estan encendidas.
         //
         // No filtra, atenua. Es el punto medio entre las dos cosas que la capa
@@ -1025,11 +1036,19 @@ export default function Mapa({
     });
 
     // Halo de coordenada sin verificar, debajo del simbolo.
+    //
+    // Va en dos capas y no en una, porque los puntos que marca salen de dos
+    // fuentes distintas: la sede gris de `sedes` y el pin de dano de `danos`.
+    // Cada halo repite el filtro de la capa a la que acompaña, y esa es toda la
+    // regla: un circulo existe si y solo si debajo hay un simbolo dibujado.
+    // Cuando la capa tenia un filtro propio, apagar la capa de sedes o una
+    // casilla de dano dejaba el circulo flotando sobre un mapa vacio, y el
+    // contador de la tarjeta, que si respeta la seleccion, decia otra cifra.
     m.addLayer({
       id: "sedes-coord",
       type: "circle",
       source: "sedes",
-      filter: ["!=", ["get", "calidad_coord"], "gps_validated"],
+      filter: sinVerificar(filtroSinGris(d.danesConPin)),
       layout: { visibility: "none" },
       paint: {
         "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 4, 14, 12],
@@ -1182,6 +1201,27 @@ export default function Mapa({
     // sin dano. Dos cosas distintas no pueden compartir el mismo simbolo.
     const atenua = (dentro: number, fuera: number): Expr =>
       ["case", ["get", "en_seleccion"], dentro, fuera] as Expr;
+
+    // El mismo halo de `sedes-coord`, para los puntos que dibuja la capa de
+    // daños. Repite el filtro de estado de esas capas, incluido `sin_dano`,
+    // porque el circulo hueco de la sede revisada tambien es un simbolo puesto
+    // sobre una coordenada. Se atenua igual que el punto al que acompaña.
+    m.addLayer({
+      id: "danos-coord",
+      type: "circle",
+      source: "danos",
+      filter: sinVerificar(filtroEstado(d.capas.estadosDano,
+                                        d.capas.danosTodasLasBandas,
+                                        d.capas.subtipos, d.capas.emisores)),
+      layout: { visibility: "none" },
+      paint: {
+        "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 4, 14, 12],
+        "circle-color": "rgba(0,0,0,0)",
+        "circle-stroke-color": REPORTE,
+        "circle-stroke-width": 1.2,
+        "circle-stroke-opacity": atenua(0.75, 0.3) as never,
+      },
+    });
 
     m.addLayer({
       id: "danos-pin",
@@ -1564,6 +1604,7 @@ export default function Mapa({
       m.setFilter("sedes-punto", f);
       m.setFilter("sedes-pin", f);
       m.setFilter("sedes-realce", f);
+      m.setFilter("sedes-coord", sinVerificar(f));
     });
   }, [danesConPin, generacion]);
 
@@ -1658,11 +1699,6 @@ export default function Mapa({
         "visibility",
         capas.sedes && porIvid && !verIes(filtros) ? "visible" : "none",
       );
-      m.setLayoutProperty(
-        "sedes-coord",
-        "visibility",
-        filtros.resaltarCoordDudosa && !verIes(filtros) ? "visible" : "none",
-      );
       m.setFilter("bandas", filtroBandas(filtros.bandas));
       m.setFilter("bandas-linea", filtroBandas(filtros.bandas));
       m.setLayoutProperty(
@@ -1689,11 +1725,13 @@ export default function Mapa({
       ver("sedes-punto", escuelas);
       ver("sedes-pin", escuelas);
       ver("sedes-realce", escuelas && pintaPorIvid(filtros));
+      ver("sedes-coord", escuelas && filtros.resaltarCoordDudosa);
       ver("territorio", capas.territorio);
       ver("danos-punto", danosEscolares);
       ver("danos-pin", danosEscolares);
       ver("danos-sin", danosEscolares);
       ver("danos-resalte", danosEscolares);
+      ver("danos-coord", danosEscolares && filtros.resaltarCoordDudosa);
       ver("huellas-relleno", capas.huellas && !verIes(filtros));
       ver("huellas-linea", capas.huellas && !verIes(filtros));
       // Inventario ocre: casilla de educación superior. Daño de IES: esa misma
@@ -1736,6 +1774,9 @@ export default function Mapa({
       m.setFilter("danos-pin", conRecorte(conDanoAhora));
       m.setFilter("danos-punto", conRecorte(conDanoAhora));
       m.setFilter("danos-sin", conRecorte(sinDano ? ["sin_dano"] : []));
+      // Los estados encendidos sin separar: es la union de lo que dibujan las
+      // tres capas de arriba, que es donde tiene que haber halo.
+      m.setFilter("danos-coord", sinVerificar(conRecorte(capas.estadosDano)));
       if (m.getLayer("danos-resalte")) {
         m.setFilter("danos-resalte",
                     filtroResalte(capas, resalte ? [...resalte.danes] : null));
@@ -1776,6 +1817,8 @@ export default function Mapa({
                          atenua(hay ? 0.2 : 1, hay ? 0.1 : 0.4) as never);
       m.setPaintProperty("danos-sin", "circle-stroke-opacity",
                          atenua(hay ? 0.2 : 0.9, hay ? 0.1 : 0.35) as never);
+      m.setPaintProperty("danos-coord", "circle-stroke-opacity",
+                         atenua(hay ? 0.18 : 0.75, hay ? 0.08 : 0.3) as never);
       m.setPaintProperty("danos-resalte", "circle-color", RESALTE[tema]);
       m.setPaintProperty("danos-resalte", "circle-stroke-color",
                          tema === "claro" ? "#ffffff" : "#0b0b0b");

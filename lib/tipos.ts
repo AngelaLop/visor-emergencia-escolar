@@ -420,6 +420,11 @@ export type Dano = {
   matricula: number;
   matricula_es_de_2022?: boolean;
   encuestada?: boolean;
+  /** El control de calidad de la coordenada con la que se dibuja el punto.
+   *  Viaja con el daño por la misma razón que `secretaria`: estos puntos salen
+   *  de aquí y no de la colección de sedes, así que el círculo que marca una
+   *  coordenada sin verificar solo se puede pintar si el dato está en el daño. */
+  calidad_coord?: string;
   lon: number | null;
   lat: number | null;
   fecha: string;
