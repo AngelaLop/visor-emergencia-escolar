@@ -290,6 +290,11 @@ export function pasa(
   // que apagar el modelo no puede apagar la evidencia. Sin esta excepción, con
   // la pantalla abierta en 6,0 y 6,5, elegir una secretaría daba un conteo que
   // dejaba fuera escuelas cuyo punto de daño el mapa estaba dibujando.
+  //
+  // La excepción vale mientras haya un punto de daño. Con la capa de daños
+  // apagada quien llama pasa el conjunto vacío (`danesAfirmado` en
+  // `app/page.tsx`), y entonces recorta solo la banda: si el mapa no dibuja
+  // reportes, la selección tampoco puede estar hecha de ellos.
   if (recortaPorBanda && !f.bandas.includes(s.banda) && !conDano?.has(s.dane)) {
     return false;
   }

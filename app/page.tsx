@@ -241,9 +241,23 @@ export default function Pagina() {
   // Todas las que el reporte ganador afirma dañadas, sin mirar las casillas.
   // El mapa las pinta de color y no de gris; la lista no cambia al tocar un
   // subtipo, para no reescribir 26 mil rasgos en cada clic.
+  //
+  // Vacío con la capa de daños apagada, y esto es lo que arregla el 2 de
+  // septiembre de 2026. Este conjunto hace dos cosas fuera del dibujo de los
+  // pines: deja pasar una sede reportada aunque su banda esté apagada (el
+  // `conDano` de `pasa`, en `lib/datos.ts`) y quita el punto gris de debajo del
+  // pin (`danesConPin`). Las dos suponen que hay un pin dibujado. Con la capa
+  // apagada no lo hay, así que las dos sobran, y sin apagarlas el botón de
+  // "Daños reportados" no apagaba los reportes: con la banda 6,5 encendida y la
+  // capa apagada, la cifra de la derecha decía 2.767 mientras el mapa dibujaba
+  // 1.062 puntos, y las otras 1.705 quedaban contadas y sin nada que las
+  // representara, ni pin porque la capa estaba apagada ni gris porque se lo
+  // había quitado el pin que ya no existía.
   const danesAfirmado = useMemo(
-    () => danesConDano(danosEnMapa, ["colapso", "dano"], SUBTIPOS),
-    [danosEnMapa],
+    () => (capas.reportes
+      ? danesConDano(danosEnMapa, ["colapso", "dano"], SUBTIPOS)
+      : new Set<string>()),
+    [danosEnMapa, capas.reportes],
   );
   const danesConPin = useMemo(() => [...danesAfirmado], [danesAfirmado]);
   // Las que tienen daño afirmado y ese daño está apagado. Salen de la
@@ -557,11 +571,18 @@ export default function Pagina() {
    *
    * Recortados contra `indice.porDane`, que es el marco ya filtrado, igual que
    * `nConDano`. Así la tarjeta habla de las mismas sedes que la cifra grande,
-   * que es lo que su texto de ayuda promete. */
+   * que es lo que su texto de ayuda promete.
+   *
+   * Vacío con la capa de daños apagada, y entonces la tarjeta entera no se
+   * dibuja: su primera línea dice "las N sedes con daño dibujadas" y con la
+   * capa apagada no hay ninguna dibujada. Es una tarjeta que describe lo que
+   * el mapa está pintando, así que sin pintura no tiene de qué hablar. */
   const marcadas = useMemo(
-    () => danosMarcados(danosPintados, capas.estadosDano, capas.subtipos,
-                        indice.porDane),
-    [danosPintados, capas.estadosDano, capas.subtipos, indice],
+    () => (capas.reportes
+      ? danosMarcados(danosPintados, capas.estadosDano, capas.subtipos,
+                      indice.porDane)
+      : []),
+    [danosPintados, capas.estadosDano, capas.subtipos, indice, capas.reportes],
   );
 
   /** El directorio entero indexado por código DANE.
@@ -755,13 +776,19 @@ export default function Pagina() {
           onExportarResalte={modoIes || !resalte
             ? null
             : () => descarga(sedesResaltadas)}
-          sinCoordenada={modoIes ? { sedes: 0, matricula: 0 } : sinCoord}
+          sinCoordenada={modoIes || !capas.reportes
+            ? { sedes: 0, matricula: 0 }
+            : sinCoord}
           conDano={modoIes
             ? (capas.reportes
               ? (capas.sedes ? iesConDano.length : resumenIes.sedes)
               : 0)
-            : (soloDanos ? resumenDanos.sedes : nConDano)}
-          conDanoFuera={modoIes || soloDanos ? 0 : nRasgosConDano - nConDano}
+            : (capas.reportes
+              ? (soloDanos ? resumenDanos.sedes : nConDano)
+              : 0)}
+          conDanoFuera={modoIes || soloDanos || !capas.reportes
+            ? 0
+            : nRasgosConDano - nConDano}
           soloDanos={modoIes ? !capas.sedes : soloDanos}
           modoIes={modoIes}
           onExportar={() => {
