@@ -145,6 +145,8 @@ export default function PaginaPlan() {
   // plan completo y nada más.
   const [simular, setSimular] = useState(false);
   const [formaCalculo, setFormaCalculo] = useState(false);
+  // La hoja de tarjetas en el teléfono. En escritorio no se usa.
+  const [hojaAbierta, setHojaAbierta] = useState(false);
   const reposo = !simular || enPausaInicial;
   const arranca = useCallback((v: boolean) => {
     if (v) setEnPausaInicial(false);
@@ -219,6 +221,8 @@ export default function PaginaPlan() {
     [guion, dia],
   );
 
+  const objetivos = useMemo(() => new Set(hoy.map((g) => g.dane)), [hoy]);
+
   const moviles: Movil[] = hoy.map((g) => {
     const e = estadoEn(g, t, inspeccion);
     return { cuadrilla: g.cuadrilla, punto: e.punto, fase: e.fase };
@@ -277,6 +281,7 @@ export default function PaginaPlan() {
           diaActual={dia}
           moviles={reposo ? [] : moviles}
           visitadas={visitadas}
+          objetivos={objetivos}
           reposo={reposo}
           simulando={simular}
           altoSimulacion={ALTO_SIMULACION}
@@ -288,13 +293,40 @@ export default function PaginaPlan() {
       </div>
 
       <div
-        // La columna usa todo el alto: el panel de simulación arranca a su
-        // derecha, así que no la tapa. En el teléfono sí la tapa, y ahí se
-        // acorta.
-        className={`pointer-events-none absolute left-0 top-0 z-10 flex w-[380px] max-w-full flex-col gap-2 overflow-y-auto p-3 ${
-          simular ? "max-h-[calc(100dvh-265px)] md:max-h-dvh" : "max-h-dvh"
-        }`}
+        // En escritorio es la columna izquierda y usa todo el alto: el panel de
+        // simulación arranca a su derecha, así que no la tapa.
+        //
+        // En el teléfono es una hoja que sube desde abajo, como en el visor
+        // nacional, y arranca recogida para que lo primero que se vea sea el
+        // mapa. Con la simulación prendida se esconde: el panel de abajo ocupa
+        // ese lugar y se cierra con su propia x.
+        className={
+          "pointer-events-auto fixed inset-x-0 bottom-0 z-10 flex flex-col gap-2 " +
+          "overflow-y-auto overscroll-contain px-2 pb-6 " +
+          (hojaAbierta ? "max-h-[88svh] " : "max-h-[38svh] ") +
+          (simular ? "hidden md:flex " : "") +
+          "md:pointer-events-none md:absolute md:inset-x-auto md:bottom-auto " +
+          "md:left-0 md:top-0 md:max-h-dvh md:w-[380px] md:p-3"
+        }
       >
+        <button
+          onClick={() => setHojaAbierta(!hojaAbierta)}
+          aria-label={hojaAbierta ? "Recoger el panel" : "Desplegar el panel"}
+          className="sticky top-0 z-20 -mx-2 flex h-7 shrink-0 items-center justify-center px-2 md:hidden"
+        >
+          <span
+            className="flex h-full w-full items-center justify-center rounded-t-lg"
+            style={{
+              background: "var(--superficie)",
+              boxShadow: "0 -1px 4px rgba(0,0,0,.15)",
+            }}
+          >
+            <span
+              className="block h-1 w-10 rounded-full"
+              style={{ background: "var(--tinta-3)" }}
+            />
+          </span>
+        </button>
         <div className="pointer-events-auto flex flex-col gap-2">
           <Encabezado plan={plan} tema={tema} onTema={setTema} />
           {error && (
@@ -381,13 +413,15 @@ export default function PaginaPlan() {
 
       {plan && sede && (
         <div
-          // Arranca debajo del botón del visor nacional.
-          className="pointer-events-none absolute right-0 top-12 z-20 w-[400px] max-w-full overflow-y-auto p-3"
-          // Termina antes de los controles del mapa (zoom, casa y escala), que
-          // van abajo a la derecha: tapados, no había cómo volver a la vista
-          // inicial con la ficha abierta, que es justo cuando se necesita.
+          // Arranca debajo del botón del visor nacional. En el teléfono ocupa el
+          // ancho y va por encima de la hoja de tarjetas; se cierra con su botón.
+          //
+          // En escritorio termina antes de los controles del mapa (zoom, casa y
+          // escala), que van abajo a la derecha: tapados, no había cómo volver
+          // a la vista inicial con la ficha abierta.
+          className="pointer-events-none fixed inset-x-0 top-12 z-30 max-h-[calc(100dvh-56px)] overflow-y-auto p-2 md:absolute md:left-auto md:right-0 md:z-20 md:max-h-[var(--alto-ficha)] md:w-[400px] md:p-3"
           style={{
-            maxHeight: simular
+            ["--alto-ficha" as string]: simular
               ? `calc(100dvh - ${ALTO_SIMULACION + 48}px)`
               : `calc(100dvh - ${48 + ALTO_CONTROLES}px)`,
           }}

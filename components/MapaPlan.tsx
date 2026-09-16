@@ -66,10 +66,20 @@ const ESTILO = {
  */
 const VISTA_INICIAL = { center: [-76.27, 4.09] as [number, number], zoom: 8.12 };
 const MARGEN_PANEL = { left: 380, top: 0, right: 0, bottom: 0 };
-/** En el teléfono el panel no va al costado, así que no hay que correr nada. */
 const SIN_MARGEN = { left: 0, top: 0, right: 0, bottom: 0 };
+/** Lo que tapa las tarjetas. En el teléfono no van al costado sino en una hoja
+ *  abajo que recogida mide el 38 % del alto, más el botón del visor nacional
+ *  arriba. */
 function margenPanel() {
-  return window.innerWidth >= 768 ? MARGEN_PANEL : SIN_MARGEN;
+  if (window.innerWidth >= 768) return MARGEN_PANEL;
+  return { left: 0, right: 0, top: 48, bottom: Math.round(window.innerHeight * 0.38) };
+}
+/** La vista de entrada. En el teléfono el mapa visible es angosto y bajo: con el
+ *  zoom de escritorio no caben las 43, y con 7,4 sí. */
+function vistaInicial() {
+  return window.innerWidth >= 768
+    ? VISTA_INICIAL
+    : { ...VISTA_INICIAL, zoom: 7.4 };
 }
 
 const APAGADO = { claro: "#c9c8c1", oscuro: "#3f3f3b" };
@@ -164,7 +174,7 @@ class ControlInicio implements maplibregl.IControl {
       "<path d=\"M2 7.2 8 2l6 5.2V14H10v-4H6v4H2V7.2Z\" fill=\"none\" " +
       "stroke=\"#333\" stroke-width=\"1.4\" stroke-linejoin=\"round\"/></svg>";
     b.onclick = () => {
-      m.easeTo({ ...VISTA_INICIAL, padding: margenPanel(), duration: 600 });
+      m.easeTo({ ...vistaInicial(), padding: margenPanel(), duration: 600 });
       this.alVolver();
     };
     this.div.appendChild(b);
@@ -228,6 +238,32 @@ function creaDia(color: string, dia: number, borde: string, tinta: string): Imag
  * encontrarse con el ojo mientras se mueve y va a pasar por encima de pines del
  * mismo color.
  */
+/** La escuela que toca hoy y todavía no se visita: el mismo círculo, hueco y
+ *  con borde grueso del color de la cuadrilla. Así se sabe desde que arranca el
+ *  día a dónde va cada una, y el pin se rellena cuando llega. */
+function creaMeta(color: string, dia: number, superficie: string): ImageData {
+  const R = 2;
+  const s = 26;
+  const c = document.createElement("canvas");
+  c.width = s * R;
+  c.height = s * R;
+  const x = c.getContext("2d")!;
+  x.scale(R, R);
+  x.beginPath();
+  x.arc(13, 13, 10, 0, Math.PI * 2);
+  x.fillStyle = superficie;
+  x.fill();
+  x.strokeStyle = color;
+  x.lineWidth = 3;
+  x.stroke();
+  x.fillStyle = color;
+  x.font = `bold ${dia > 9 ? 11 : 12}px system-ui, sans-serif`;
+  x.textAlign = "center";
+  x.textBaseline = "middle";
+  x.fillText(String(dia), 13, 13.5);
+  return x.getImageData(0, 0, s * R, s * R);
+}
+
 function creaMovil(color: string, letra: string, borde: string): ImageData {
   const R = 2;
   const s = 34;
@@ -315,6 +351,7 @@ export default function MapaPlan({
   diaActual,
   moviles,
   visitadas,
+  objetivos,
   reposo,
   simulando,
   altoSimulacion,
@@ -332,6 +369,8 @@ export default function MapaPlan({
   moviles: Movil[];
   /** Las escuelas ya visitadas hasta el instante que se está viendo. */
   visitadas: Set<string>;
+  /** Las escuelas que toca visitar el día que se está viendo. */
+  objetivos: Set<string>;
   /** La vista de entrada, antes de reproducir. Solo las escuelas, todas con el
    *  color de su cuadrilla y sin trazados ni poblados: lo primero que se ve es
    *  a qué grupo pertenece cada escuela, no el recorrido. */
@@ -376,6 +415,11 @@ export default function MapaPlan({
       }
       if (!m.hasImage(`movil-${c}`)) {
         m.addImage(`movil-${c}`, creaMovil(colorCuadrilla(c, oscuro), c, borde));
+      }
+      for (let d = 1; d <= DIAS_PIN; d++) {
+        if (!m.hasImage(`meta-${c}-${d}`)) {
+          m.addImage(`meta-${c}-${d}`, creaMeta(colorCuadrilla(c, oscuro), d, borde));
+        }
       }
     }
     if (!m.hasImage("dia-apagado")) {
@@ -554,8 +598,8 @@ export default function MapaPlan({
     const m = new maplibregl.Map({
       container: caja.current,
       style: ESTILO[tema],
-      center: VISTA_INICIAL.center,
-      zoom: VISTA_INICIAL.zoom,
+      center: vistaInicial().center,
+      zoom: vistaInicial().zoom,
       attributionControl: { compact: true },
     });
     m.setPadding(margenPanel());
@@ -679,12 +723,17 @@ export default function MapaPlan({
       const hecha = diaActual === null || reposo ||
         visitadas.has(s.dane_propuesto);
       const on = hecha && suya(s.cuadrilla);
+      const meta = !hecha && suya(s.cuadrilla) && objetivos.has(s.dane_propuesto);
       return {
         type: "Feature" as const,
         geometry: { type: "Point" as const, coordinates: [s.lon_final, s.lat_final] },
         properties: {
           dane: s.dane_propuesto,
-          icono: on ? `dia-${s.cuadrilla}-${s.dia_corrido}` : "dia-apagado",
+          icono: on
+            ? `dia-${s.cuadrilla}-${s.dia_corrido}`
+            : meta
+              ? `meta-${s.cuadrilla}-${s.dia_corrido}`
+              : "dia-apagado",
           elegida: s.dane_propuesto === seleccion,
           // Lo que dice el globo al pasar el cursor.
           nombre: s.sede,
@@ -738,7 +787,7 @@ export default function MapaPlan({
           properties: { nombre: l.nombre },
         })) as never,
     });
-  }, [plan, tramos, escenario, diaActual, visitadas, reposo, cuadrilla,
+  }, [plan, tramos, escenario, diaActual, visitadas, objetivos, reposo, cuadrilla,
       seleccion, oscuro, tema, capasListas]);
 
   // Los móviles, aparte y en su propio efecto: se mueven sesenta veces por
@@ -795,7 +844,7 @@ export default function MapaPlan({
     if (!m || !listo.current || !plan || !tramos) return;
     if (!simulando) {
       if (encuadrado.current) {
-        m.easeTo({ ...VISTA_INICIAL, padding: margenPanel(), duration: 700 });
+        m.easeTo({ ...vistaInicial(), padding: margenPanel(), duration: 700 });
         encuadrado.current = false;
       }
       return;
@@ -817,7 +866,8 @@ export default function MapaPlan({
       padding: {
         top: 56,
         right: ancho ? 72 : 24,
-        bottom: altoSimulacion + 16,
+        // En el teléfono el panel es más alto: los botones pasan a dos filas.
+        bottom: altoSimulacion + (ancho ? 16 : 48),
         left: ancho ? MARGEN_PANEL.left + 16 : 24,
       },
       duration: 800,
