@@ -767,6 +767,20 @@ export default function Pagina() {
       />
 
       <div className="pointer-events-none absolute inset-x-2 top-2 z-20 flex flex-col items-stretch gap-2 md:inset-x-auto md:right-0 md:top-0 md:bottom-0 md:items-end md:p-3 md:pb-16">
+        {/* La salida a la pantalla del plan de campo de las 43 sedes del BID.
+            Va arriba de la columna, fuera de las tarjetas, porque no es un
+            control de este mapa sino otra pantalla. */}
+        <Link
+          href="/plan"
+          className="pointer-events-auto hidden rounded-lg border px-3 py-1.5 text-[12px] font-semibold shadow-md md:block"
+          style={{
+            background: "var(--superficie)",
+            borderColor: "var(--borde)",
+            color: "var(--acento)",
+          }}
+        >
+          Plan de visitas en campo →
+        </Link>
         <div className={`pointer-events-auto w-full ${anchoDerecha}`}>
           <ControlDerecho
           resumen={resumenContado}
