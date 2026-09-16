@@ -72,6 +72,21 @@ export function Info({
   >(null);
   const boton = useRef<HTMLButtonElement>(null);
   const abierto = encima || fijado;
+  // Al pasar del botón a la nota hay un hueco de 6 px. Sin una espera corta, la
+  // nota se cerraba al cruzarlo y no había cómo llegar a su botón de cerrar.
+  const espera = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const entra = () => {
+    if (espera.current) clearTimeout(espera.current);
+    setEncima(true);
+  };
+  const sale = () => {
+    espera.current = setTimeout(() => setEncima(false), 200);
+  };
+  const cierra = () => {
+    if (espera.current) clearTimeout(espera.current);
+    setEncima(false);
+    setFijado(false);
+  };
 
   /** Coloca la nota dentro de la ventana, por los cuatro lados.
    *
@@ -106,9 +121,9 @@ export function Info({
         ref={boton}
         onMouseEnter={() => {
           ubica();
-          setEncima(true);
+          entra();
         }}
-        onMouseLeave={() => setEncima(false)}
+        onMouseLeave={sale}
         onClick={() => {
           ubica();
           setFijado(!fijado);
@@ -140,7 +155,18 @@ export function Info({
             color: "var(--tinta-2)",
             fontWeight: 400,
           }}
+          onMouseEnter={entra}
+          onMouseLeave={sale}
         >
+          <button
+            onClick={cierra}
+            aria-label="Cerrar la nota"
+            title="Cerrar"
+            className="float-right -mr-1 -mt-0.5 ml-2 px-1 text-[14px] leading-none"
+            style={{ color: "var(--tinta-3)" }}
+          >
+            ×
+          </button>
           {texto}
           {fuente && (
             <>

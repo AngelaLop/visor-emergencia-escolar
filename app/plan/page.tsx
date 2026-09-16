@@ -421,6 +421,10 @@ export default function PaginaPlan() {
           onDia={vaAlDia}
           cuadrilla={cuadrilla}
           onCuadrilla={setCuadrilla}
+          onCierra={() => {
+            reinicia();
+            setSimular(false);
+          }}
         />
       )}
     </main>
@@ -748,7 +752,7 @@ function TarjetaEscenarios({
           Escenarios
           <Info
             texto={
-              "Los tres son el mismo plan y lo único que cambia es dónde se le permite pasar la noche. La base propia está permitida en los tres: si volver a Cali sale mejor que quedarse en el pueblo, el plan lo escoge.\n\nLo que cuesta una noche de hotel y un viático no está en ninguna fuente de este proyecto, así que la escogencia no se hace aquí. Lo que se muestra es qué se ahorra y a cambio de cuántas noches.\n\nEl plan nombra el poblado, no el hotel. Que haya cama hay que confirmarlo."
+              "Diseñamos tres escenarios para entender el tiempo y los kilómetros que podría gastar cada cuadrilla según dónde decida pasar la noche.\n\nEn el primero, la cuadrilla vuelve cada noche a su ciudad base, Cali o Pereira. En el segundo duerme en una ciudad principal del corredor: Palmira, Armenia, Tuluá, Cartago o Buga. En el tercero duerme en la cabecera del municipio del recorrido."
             }
             ancho
           />
@@ -833,7 +837,7 @@ function TarjetaInspeccion({
             Duración estimada de la inspección
             <Info
               texto={
-                "No lo sabemos, y no se puede deducir. El TdR lo esquiva al fijar 5 visitas por cuadrilla por semana: ese número ya trae la inspección adentro, pero no la separa del desplazamiento.\n\nEn vez de inventar una cifra, aquí es una perilla. Muévala y mire cuántos días se salen de una jornada de ocho horas. Las ocho horas también son un supuesto nuestro, no del TdR."
+                "Mueve la perilla para ver cuántos días se salen de una jornada estimada de ocho horas, sumando la visita y el recorrido estimado de cada día en el escenario escogido."
               }
               ancho
             />
@@ -991,6 +995,7 @@ function BarraTiempo({
   onDia,
   cuadrilla,
   onCuadrilla,
+  onCierra,
 }: {
   guion: GuionDia[];
   cuadrillasPlan: string[];
@@ -1005,6 +1010,7 @@ function BarraTiempo({
   onDia: (d: number) => void;
   cuadrilla: string | null;
   onCuadrilla: (c: string | null) => void;
+  onCierra: () => void;
 }) {
   const dias = Array.from({ length: DIAS_DE_CAMPO }, (_, i) => i + 1);
   const porClave = new Map(guion.map((g) => [`${g.cuadrilla}|${g.diaCorrido}`, g]));
@@ -1021,10 +1027,21 @@ function BarraTiempo({
       <div className="pointer-events-auto">
         <Tarjeta>
           <div className="px-3 py-2">
-            <h2 className="mb-1.5 text-[12px] font-semibold">
-              Simulación
-              <Info texto={COMO_LEER_SIMULACION} ancho />
-            </h2>
+            <div className="mb-1.5 flex items-start justify-between gap-2">
+              <h2 className="text-[12px] font-semibold">
+                Simulación
+                <Info texto={COMO_LEER_SIMULACION} ancho />
+              </h2>
+              <button
+                onClick={onCierra}
+                aria-label="Cerrar la simulación"
+                title="Cerrar la simulación"
+                className="px-1 text-[16px] leading-none"
+                style={{ color: "var(--tinta-3)" }}
+              >
+                ×
+              </button>
+            </div>
             <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={() => onCorriendo(!corriendo)}
