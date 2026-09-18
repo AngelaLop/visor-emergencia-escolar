@@ -19,6 +19,7 @@
 
 import { useEffect, useRef } from "react";
 
+import { coma } from "@/lib/plan";
 import type { Escenario, Plan } from "@/lib/plan";
 
 /** La carpeta del Drive con el archivo de verificación de las 17 sedes. Va sin
@@ -27,16 +28,14 @@ import type { Escenario, Plan } from "@/lib/plan";
 const CARPETA_VERIFICACION =
   "https://drive.google.com/drive/folders/17J3YCy_odUoWeljcwNkd8s5m_5eOomm-";
 
-function horas(n: number): string {
-  return n.toFixed(1).replace(".", ",");
-}
-
 export default function FormaCalculo({
   plan,
+  escenario,
   abierto,
   onCierra,
 }: {
   plan: Plan;
+  escenario: Escenario;
   abierto: boolean;
   onCierra: () => void;
 }) {
@@ -49,11 +48,25 @@ export default function FormaCalculo({
     if (!abierto && d.open) d.close();
   }, [abierto]);
 
-  const esc = (id: Escenario) => plan.escenarios.find((e) => e.escenario === id);
-  const porCuadrilla = (id: Escenario, c: string) =>
-    plan.sedes
-      .filter((s) => s.escenario === id && s.cuadrilla === c)
-      .reduce((a, s) => a + s.min_carretera_del_dia, 0) / 60;
+  const grupos = new Map<string, number>();
+  for (const s of plan.sedes) {
+    if (s.escenario !== escenario) continue;
+    const g = s.grupo ?? "BID (43)";
+    grupos.set(g, (grupos.get(g) ?? 0) + 1);
+  }
+  const dias = (plan.dias ?? []).filter((d) => d.escenario === escenario);
+  const cupos = plan.tdr.cuadrillas * plan.tdr.semanas_campo * 5;
+  const libres = cupos - dias.length;
+  const resumen = plan.escenarios.find((e) => e.escenario === escenario);
+  const dosVisitas = dias.filter((d) => d.visitas.length === 2).length;
+  const unaVisita = dias.length - dosVisitas;
+  const total = dias.reduce((a, d) => a + d.min_carretera, 0);
+  const porCuadrillaMin = new Map<string, number>();
+  for (const d of dias) {
+    porCuadrillaMin.set(d.cuadrilla, (porCuadrillaMin.get(d.cuadrilla) ?? 0) + d.min_carretera);
+  }
+  const cuadrillas = [...porCuadrillaMin.entries()].sort();
+  const otrasGrupos = [...grupos.entries()].filter(([g]) => g !== "BID (43)");
 
   return (
     <dialog
@@ -140,7 +153,8 @@ export default function FormaCalculo({
           <p>
             Mapbox responde distinto según la hora. Para que el número no cambie
             de una consulta a otra, cada trayecto se pide con hora fija: salida a
-            las 7:00 y regreso a las 16:00 de un martes. La línea que se dibuja en
+            las 7:00, de una escuela a otra a las 11:00 y regreso a las 16:00 de
+            un martes. La línea que se dibuja en
             el mapa es el trazado de esa misma consulta, así que el dibujo y los
             minutos dicen lo mismo.
           </p>
@@ -162,54 +176,102 @@ export default function FormaCalculo({
           </p>
         </Seccion>
 
-        <Seccion titulo="4. Asignación de cuadrillas">
+        <Seccion titulo="4. Qué escuelas entran">
           <p>
-            El TdR fija 3 cuadrillas, 5 visitas por cuadrilla por semana y 3
-            semanas de campo: 45 cupos para 43 visitas, una visita por día. Cada
-            sede sale de la base más cercana por carretera, 28 desde Cali y 15
-            desde Pereira. Eso pide 2 cuadrillas en Cali y 1 en Pereira, que es el
-            único reparto que cabe. Las 2 visitas de holgura quedan en Cali.
+            Las tres secciones de arriba hablan de las{" "}
+            {grupos.get("BID (43)") ?? 43} sedes del préstamo: esas son las que
+            pasaron por la limpieza de coordenadas. Las que se suman después no
+            están en esa cuenta.
           </p>
           <p>
-            Primero se ordena y después se optimiza. Las sedes de Cali se reparten
-            en dos zonas con municipios enteros, escogiendo la partición que deja
-            las sedes más juntas: la cuadrilla A al norte (Andalucía, Restrepo,
-            Riofrío, Trujillo, Vijes y Yotoco) y la B al sur (Candelaria, Dagua,
-            Florida y La Cumbre). La C atiende todo lo de Pereira. Dentro de cada
-            zona, un optimizador exacto (CP-SAT, de OR-Tools) arma las tres
-            semanas con el menor tiempo total de carretera: decide qué sedes van
-            juntas, en qué orden y dónde duerme la cuadrilla. Cada semana sale de
-            la base el lunes y vuelve el viernes.
-          </p>
-          <p>
-            La zona lejana le toca entera a una cuadrilla, así que A maneja más
-            que B: {horas(porCuadrilla("municipio", "A"))} h contra{" "}
-            {horas(porCuadrilla("municipio", "B"))} h durmiendo en el municipio. El
-            total no cambia con eso. Las semanas con 5 visitas van primero, para
-            que el cupo libre quede al final y ahí se pueda recuperar un día
-            perdido. El orden no prioriza por el estado de la escuela.
+            El encargo original son {grupos.get("BID (43)") ?? 0} sedes del
+            Valle. En la reunión del 16 de septiembre se decidió probar cuántas
+            sedes más caben de las secretarías certificadas del consolidado,
+            sacando secretarías completas si no alcanza el tiempo. Buenaventura
+            quedó fuera.
+            {otrasGrupos.length === 0
+              ? " Este alcance es solo esas 43."
+              : ` Este alcance suma ${otrasGrupos.map(([g, n]) => `${n} de ${g}`).join(", ")}.`}{" "}
+            Una sede de Palmira quedó fuera porque ninguna fuente trae su
+            coordenada. Las sedes nuevas no están en el tablero del Valle, así
+            que su estado sale de la capa actual del MEN.
           </p>
         </Seccion>
 
-        <Seccion titulo="5. Escenarios de pernoctación">
+        <Seccion titulo="5. Cuadrillas y calendario">
           <p>
-            Los tres escenarios son el mismo modelo y solo cambia dónde se permite
-            dormir: volver a la base cada noche ({horas(esc("base")?.horas_carretera ?? 0)} h
-            de carretera), dormir en una ciudad principal del corredor, que son
-            Palmira, Armenia, Tuluá, Cartago y Buga ({horas(esc("ciudad")?.horas_carretera ?? 0)} h),
-            o dormir en la cabecera del municipio ({horas(esc("municipio")?.horas_carretera ?? 0)} h).
+            El TdR fija {plan.tdr.cuadrillas} cuadrillas por{" "}
+            {plan.tdr.semanas_campo} semanas: {cupos} días-cuadrilla. Este
+            alcance usa {resumen?.cuadrillas ?? "—"} cuadrillas y{" "}
+            {resumen?.dias_campo ?? "—"} días ({dias.length}{" "}
+            días de campo)
+            {resumen
+              ? resumen.en_tdr
+                ? ", y cabe en el TdR"
+                : ", y no cabe en el TdR"
+              : ""}
+            . Cada día tiene una o dos visitas: con inspecciones de 3 horas y
+            una jornada de 8, dos visitas dejan 2 horas para manejar y una sola
+            deja 5. La cuadrilla duerme en una de las siete ciudades del
+            corredor o en una de cinco cabeceras con hoteles estables según el
+            Registro Nacional de Turismo y sin daño grave en su casco urbano
+            según el MEN. No vuelve a su base los fines de semana: el lunes
+            sigue desde donde terminó el viernes.
+            {resumen ? ` ${basesDelResumen(resumen.bases)}.` : ""}
           </p>
           <p>
-            El punto de cada pueblo es la mediana de las coordenadas de sus sedes
-            urbanas. El plan nombra el pueblo, no el hotel: que haya cama hay que
-            confirmarlo. Volviendo a la base cada noche cualquier calendario
-            cuesta lo mismo, así que ese escenario usa el calendario del de
-            municipio, escuela por escuela.
+            El plan lo arma un optimizador exacto (CP-SAT, de OR-Tools) en un
+            solo paso: decide a la vez qué escuelas van juntas en un día, qué
+            cuadrilla hace cada día, en qué orden y dónde duerme, con la regla
+            de que el sitio donde termina un día es donde empieza el siguiente.
+            Busca el menor tiempo total de carretera, con la regla de que cada
+            municipio lo atiende una sola cuadrilla. Repartir sede por sede
+            costaba lo mismo, pero partía municipios entre dos cuadrillas.
+          </p>
+          <p>
+            Resultado: {dosVisitas} días con dos visitas y {unaVisita} con una
+            {libres > 0
+              ? ` (${libres === 1 ? "sobra un día-cuadrilla" : `sobran ${libres} días-cuadrilla`} del cupo del TdR)`
+              : libres < 0
+                ? ` (se pasa en ${-libres === 1 ? "un día-cuadrilla" : `${-libres} días-cuadrilla`} del cupo del TdR)`
+                : ""}
+            , {coma(total / 60)} h de carretera en total
+            {resumen?.optimo_probado
+              ? ", el mínimo posible con estas reglas"
+              : resumen
+                ? `; ningún plan con estas reglas baja de ${coma(resumen.cota_horas)} h`
+                : ""}
+            . Por cuadrilla: {cuadrillas
+              .map(([c, m]) => `${c} ${coma(m / 60)} h`)
+              .join(", ")}
+            . La cuadrilla que maneja menos es la que hace más visitas, así que
+            la jornada total queda pareja. El orden no prioriza por el estado
+            de la escuela.
+          </p>
+          <p>
+            El punto de cada ciudad es la mediana de las coordenadas de sus
+            sedes urbanas. El plan nombra la ciudad, no el hotel: que haya cama
+            hay que confirmarlo.
           </p>
         </Seccion>
       </div>
     </dialog>
   );
+}
+
+function basesDelResumen(bases: Record<string, string>): string {
+  const por = new Map<string, string[]>();
+  for (const [c, base] of Object.entries(bases)) {
+    por.set(base, [...(por.get(base) ?? []), c]);
+  }
+  const trozos = [...por.entries()].map(([base, cs]) => {
+    const cuales =
+      cs.length === 1 ? cs[0] : `${cs.slice(0, -1).join(", ")} y ${cs.at(-1)}`;
+    return `${cuales} ${cs.length === 1 ? "sale" : "salen"} de ${base}`;
+  });
+  return trozos.length === 1
+    ? trozos[0]
+    : `${trozos.slice(0, -1).join("; ")} y ${trozos.at(-1)}`;
 }
 
 function Seccion({ titulo, children }: { titulo: string; children: React.ReactNode }) {

@@ -230,10 +230,29 @@ body {
   .maplibregl-ctrl-bottom-right .ctrl-inicio {
     position: fixed;
     right: 8px;
-    top: 104px;
+    /* Los chips van en dos líneas y dejan una nota debajo. */
+    top: 128px;
   }
 
   .maplibregl-ctrl-attrib {
     font-size: 9px;
+  }
+}
+
+/* El alcance que no cabe en el TdR. El letrero rojo lo gritaba; el borde
+   intermitente lo deja como una cifra incierta, no como una alarma. */
+.chip-fuera-tdr {
+  outline: 1.5px dashed currentColor;
+  outline-offset: -3px;
+  animation: chip-fuera-tdr 2.2s ease-in-out infinite;
+}
+@keyframes chip-fuera-tdr {
+  50% {
+    outline-color: color-mix(in srgb, currentColor 22%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chip-fuera-tdr {
+    animation: none;
   }
 }

@@ -26,7 +26,7 @@
  *    se llegó a él viéndolo construirse y no de golpe.
  *
  *  - LA SECUENCIA VA EN EL NÚMERO, NO EN LA FLECHA. Cada escuela lleva escrito
- *    el día de campo en que se visita, del 1 al 15. Primero se escribía el día
+ *    el día de campo en que se visita. Primero se escribía el día
  *    de la semana, del 1 al 5, y cada cuadrilla tenía tres escuelas con el
  *    mismo número: no se leía el orden. Las flechas sobre una línea se
  *    pierden al alejar el zoom y obligan a seguir el trazo con el ojo.
@@ -44,8 +44,10 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef, useState } from "react";
 
-import { COLOR_CONCEPTO, colorCuadrilla } from "@/lib/plan";
+import { COLOR_CONCEPTO, COLOR_CUADRILLA, colorCuadrilla, secretariaDe } from "@/lib/plan";
 import type { ColeccionTramos, Concepto, Escenario, Plan } from "@/lib/plan";
+import { BORDE, colorDe, cumple } from "@/lib/lista";
+import type { ColorLista, ListaMen, Resalte } from "@/lib/lista";
 
 // Los dos estilos base que usa el visor. Van repetidos aquí y no importados del
 // mapa de la emergencia porque ese componente pesa dos mil líneas y traerlo
@@ -82,6 +84,77 @@ function vistaInicial() {
     : { ...VISTA_INICIAL, zoom: 7.4 };
 }
 
+/** El margen del encuadre: lo que tapan las tarjetas y, en el teléfono, la
+ *  hoja de abajo. Sin esto las sedes del sur o del norte quedan detrás del
+ *  panel y se lee que el escenario está incompleto. */
+function margenEncuadrePlan(): maplibregl.PaddingOptions {
+  if (window.innerWidth >= 768) {
+    return { top: 70, right: 60, bottom: 40, left: MARGEN_PANEL.left + 30 };
+  }
+  return {
+    top: 88,
+    right: 16,
+    bottom: Math.round(window.innerHeight * 0.4),
+    left: 16,
+  };
+}
+
+function cajaDeSedes(
+  plan: Plan,
+  escenario: Escenario,
+  ocultas: string[] = [],
+): maplibregl.LngLatBounds {
+  const caja = new maplibregl.LngLatBounds();
+  for (const s of plan.sedes) {
+    if (s.escenario !== escenario) continue;
+    if (ocultas.includes(secretariaDe(s))) continue;
+    caja.extend([s.lon_final, s.lat_final]);
+  }
+  return caja;
+}
+
+function encuadraCaja(m: maplibregl.Map, caja: maplibregl.LngLatBounds) {
+  if (caja.isEmpty()) return;
+  m.fitBounds(caja, {
+    padding: margenEncuadrePlan(),
+    maxZoom: 11,
+    duration: 700,
+  });
+}
+
+/** Dos visitas del mismo día que caen a menos de 250 m se tapan a zoom de
+ *  departamento. El desfase es en píxeles de icono; MapLibre lo multiplica por
+ *  el tamaño, 0,5, así que 16 son 8 px en pantalla. */
+function desfasePines(
+  sedes: { dane_propuesto: string; cuadrilla: string; dia_corrido: number;
+           lat_final: number; lon_final: number }[],
+): Map<string, [number, number]> {
+  const porDia = new Map<string, typeof sedes>();
+  for (const s of sedes) {
+    const k = `${s.cuadrilla}|${s.dia_corrido}`;
+    porDia.set(k, [...(porDia.get(k) ?? []), s]);
+  }
+  const out = new Map<string, [number, number]>();
+  for (const grupo of porDia.values()) {
+    if (grupo.length < 2) continue;
+    for (let i = 0; i < grupo.length; i++) {
+      for (let j = i + 1; j < grupo.length; j++) {
+        const a = grupo[i];
+        const b = grupo[j];
+        const mid = ((a.lat_final + b.lat_final) / 2) * Math.PI / 180;
+        const dx = (b.lon_final - a.lon_final) * Math.cos(mid);
+        const dy = b.lat_final - a.lat_final;
+        const metros = Math.hypot(dx, dy) * 111_320;
+        if (metros < 250) {
+          out.set(a.dane_propuesto, [-16, 0]);
+          out.set(b.dane_propuesto, [16, 0]);
+        }
+      }
+    }
+  }
+  return out;
+}
+
 const APAGADO = { claro: "#c9c8c1", oscuro: "#3f3f3b" };
 const SUPERFICIE = { claro: "#fcfcfb", oscuro: "#1a1a19" };
 const TINTA = { claro: "#0b0b0b", oscuro: "#ffffff" };
@@ -89,8 +162,9 @@ const GRAFITO = { claro: "#33414d", oscuro: "#d7dee4" };
 
 const VACIA = { type: "FeatureCollection", features: [] } as const;
 
-/** Los días de campo que puede llevar escritos un pin: tres semanas de cinco. */
-const DIAS_PIN = 15;
+/** Piso de días que un pin puede llevar escritos. El escenario de 4 semanas
+ *  tiene 20; si un plan trae más, se arma hasta ese tope. */
+const DIAS_PIN = 20;
 
 // La cuadrilla en movimiento. Dos que quedan a menos de CHOQUE_PX en pantalla
 // se tapan; la segunda se corre CORRIMIENTO_PX a la derecha.
@@ -99,11 +173,45 @@ const CHOQUE_PX = 22;
 const CORRIMIENTO_PX = 26;
 
 // Los municipios del Valle, del script 79. El territorio de la SE del Valle va
-// con un velo del color de la tinta y un contorno firme; los ocho municipios con
-// secretaría propia quedan sin velo. Así se ve que las rutas cruzan territorio
-// que no es de la SE, y que las 43 caen todas en el que sí.
+// con un velo del color de la tinta y un contorno firme. Las secretarías
+// certificadas que suman sedes al plan (Palmira, Yumbo, Tuluá, y en los de 91
+// también Buga y Cartago) llevan un velo más tenue y contorno punteado. Las
+// demás certificadas quedan sin velo, para que se vea qué territorio cruzan
+// las rutas sin trabajar en él.
 const MUNICIPIOS = "datos/plan_municipios.geojson";
+
+// La vista «Sedes pedidas» (script 90): todas las sedes de la lista del MEN y
+// los límites de sus 14 secretarías. Sus capas viven en el mismo mapa y se
+// prenden o se apagan con el modo, para no perder el encuadre al cambiar.
+const LIMITES_LISTA = "datos/lista_men_secretarias.geojson";
+const FUENTES_PLAN = ["municipios", "tramos", "poblados", "bases", "sedes", "moviles"];
+const FUENTES_LISTA = ["lista", "lista-limites"];
+
+/** El globo de una sede de la lista: quién es y qué se sabe de ella. */
+function globoLista(p: Record<string, unknown>): HTMLElement {
+  const nodo = document.createElement("div");
+  nodo.style.maxWidth = "260px";
+  const linea = (texto: string, estilo: Partial<CSSStyleDeclaration> = {}) => {
+    const d = document.createElement("div");
+    d.textContent = texto;
+    Object.assign(d.style, estilo);
+    nodo.append(d);
+  };
+  const gris = { fontSize: "11px", color: "var(--tinta-2)" };
+  linea(String(p.sede), { fontWeight: "600", lineHeight: "1.2" });
+  linea(`${p.municipio} · Secretaría ${p.secretaria}`, gris);
+  linea(p.dane ? `Código ${p.dane}` : "Sin código DANE de sede", gris);
+  const zona = p.zona ? String(p.zona).toLowerCase() : "zona sin dato";
+  linea(`${zona[0].toUpperCase()}${zona.slice(1)} · acceso ${p.acceso}` +
+        (p.tipo_acceso && p.tipo_acceso !== "sin medir" ? ` (${p.tipo_acceso})` : ""), gris);
+  linea(p.estado_men ? `Según el MEN: ${p.estado_men}` : "Sin reporte en la capa del MEN", gris);
+  if (p.ffie_fecha) linea(`Visitada por el FFIE el ${p.ffie_fecha} (${p.ffie_semaforo || "sin semáforo"})`, gris);
+  linea(`Coordenada: ${p.detalle_calidad}`, { ...gris, marginTop: "3px" });
+  if (p.en_plan === true || p.en_plan === "true") linea("En el plan de campo", { ...gris, fontWeight: "600" });
+  return nodo;
+}
 const VELO_SE = { claro: 0.07, oscuro: 0.09 };
+const VELO_OTRA = { claro: 0.045, oscuro: 0.06 };
 const LIMITE_MPIO = { claro: "#a3a29b", oscuro: "#5c5b56" };
 
 /** El contenido del globo de una escuela. Se arma con nodos y no con HTML en
@@ -160,7 +268,7 @@ function globoSede(p: Record<string, unknown>): HTMLElement {
 class ControlInicio implements maplibregl.IControl {
   private div!: HTMLDivElement;
 
-  constructor(private alVolver: () => void) {}
+  constructor(private alVolver: (m: maplibregl.Map) => void) {}
 
   onAdd(m: maplibregl.Map) {
     this.div = document.createElement("div");
@@ -173,10 +281,7 @@ class ControlInicio implements maplibregl.IControl {
       "<svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" style=\"margin:auto;display:block\">" +
       "<path d=\"M2 7.2 8 2l6 5.2V14H10v-4H6v4H2V7.2Z\" fill=\"none\" " +
       "stroke=\"#333\" stroke-width=\"1.4\" stroke-linejoin=\"round\"/></svg>";
-    b.onclick = () => {
-      m.easeTo({ ...vistaInicial(), padding: margenPanel(), duration: 600 });
-      this.alVolver();
-    };
+    b.onclick = () => this.alVolver(m);
     this.div.appendChild(b);
     return this.div;
   }
@@ -190,7 +295,7 @@ class ControlInicio implements maplibregl.IControl {
 export type Movil = {
   cuadrilla: string;
   punto: [number, number] | null;
-  fase: "manana" | "inspeccion" | "tarde" | "fin";
+  fase: "manana" | "inspeccion" | "entre" | "tarde" | "fin";
 };
 
 /** El pin de una escuela: un círculo del color de su cuadrilla con el día.
@@ -344,6 +449,54 @@ function creaCama(color: string, borde: string): ImageData {
   return x.getImageData(0, 0, s * R, s * R);
 }
 
+/** Crea el icono que MapLibre pide, si todavía no está.
+ *
+ * Los pines se prearman hasta el día más largo del plan, pero un escenario
+ * nuevo (20 días, una cuarta cuadrilla) puede pedir uno que el mapa cargó
+ * cuando solo había 15. Sin esta función esa escuela desaparece: MapLibre no
+ * dibuja el símbolo y no avisa más que con un warning. */
+function aseguraIcono(
+  m: maplibregl.Map,
+  id: string,
+  oscuro: boolean,
+  tema: "claro" | "oscuro",
+) {
+  if (m.hasImage(id)) return;
+  const borde = SUPERFICIE[tema];
+  const tinta = TINTA[tema];
+  if (id === "dia-apagado") {
+    m.addImage(id, creaDia(APAGADO[tema], 0, borde, borde));
+    return;
+  }
+  if (id === "cama-apagada") {
+    m.addImage(id, creaCama(APAGADO[tema], borde));
+    return;
+  }
+  if (id === "base-salida") {
+    m.addImage(id, creaBase(GRAFITO[tema], borde));
+    return;
+  }
+  const meta = /^meta-([A-Z])-(\d+)$/.exec(id);
+  if (meta) {
+    m.addImage(id, creaMeta(colorCuadrilla(meta[1], oscuro), Number(meta[2]), borde));
+    return;
+  }
+  const dia = /^dia-([A-Z])-(\d+)$/.exec(id);
+  if (dia) {
+    m.addImage(id, creaDia(colorCuadrilla(dia[1], oscuro), Number(dia[2]), borde, tinta));
+    return;
+  }
+  const cama = /^cama-([A-Z])$/.exec(id);
+  if (cama) {
+    m.addImage(id, creaCama(colorCuadrilla(cama[1], oscuro), borde));
+    return;
+  }
+  const movil = /^movil-([A-Z])$/.exec(id);
+  if (movil) {
+    m.addImage(id, creaMovil(colorCuadrilla(movil[1], oscuro), movil[1], borde));
+  }
+}
+
 export default function MapaPlan({
   plan,
   tramos,
@@ -356,14 +509,21 @@ export default function MapaPlan({
   simulando,
   altoSimulacion,
   cuadrilla,
+  ocultas,
+  secretariasPlan,
   seleccion,
   onSelecciona,
   tema,
+  modo = "plan",
+  lista = null,
+  colorLista = "zona",
+  resaltes = [],
+  ocultasLista = [],
 }: {
   plan: Plan | null;
   tramos: ColeccionTramos | null;
   escenario: Escenario;
-  /** El día corrido que se está viendo, del 1 al 15. Null muestra el plan
+  /** El día corrido que se está viendo. Null muestra el plan
    *  completo de una vez, que es la vista de reposo. */
   diaActual: number | null;
   moviles: Movil[];
@@ -381,9 +541,27 @@ export default function MapaPlan({
   altoSimulacion: number;
   /** Null es «todas». Al escoger una, las demás se apagan. */
   cuadrilla: string | null;
+  /** Las secretarías apagadas en el filtro; vacío es «todas». Quedan
+   *  prendidas las sedes de las demás y los días en que se visita alguna. */
+  ocultas: string[];
+  /** Las secretarías certificadas, aparte de la del Valle, que ponen sedes en
+   *  el escenario que se está mirando.
+   *
+   *  Dibujar el límite de una secretaría que no aporta ninguna sede es afirmar
+   *  algo que el plan no dice. En el alcance de solo la SE del Valle el mapa
+   *  traía igual los contornos de Palmira, Yumbo y Tuluá, que ahí no pintan
+   *  nada. */
+  secretariasPlan: string[];
   seleccion: string | null;
   onSelecciona: (dane: string | null) => void;
   tema: "claro" | "oscuro";
+  /** «lista» muestra todas las sedes que pidió el MEN, sin plan. */
+  modo?: "lista" | "plan";
+  lista?: ListaMen | null;
+  colorLista?: ColorLista;
+  resaltes?: Resalte[];
+  /** Las secretarías apagadas en la vista de la lista. */
+  ocultasLista?: string[];
 }) {
   const caja = useRef<HTMLDivElement>(null);
   const mapa = useRef<maplibregl.Map | null>(null);
@@ -395,42 +573,44 @@ export default function MapaPlan({
   const [capasListas, setCapasListas] = useState(0);
   const alSeleccionar = useRef(onSelecciona);
   alSeleccionar.current = onSelecciona;
+  const modoRef = useRef(modo);
+  modoRef.current = modo;
+  const listaRef = useRef(lista);
+  listaRef.current = lista;
+  const encuadrePlan = useRef<(m: maplibregl.Map) => void>(() => {});
+  encuadrePlan.current = (m) => {
+    if (!plan || modo === "lista") {
+      m.easeTo({ ...vistaInicial(), padding: margenPanel(), duration: 700 });
+      return;
+    }
+    encuadraCaja(m, cajaDeSedes(plan, escenario, ocultas));
+  };
 
   const oscuro = tema === "oscuro";
+  const temaIcono = useRef({ oscuro, tema });
+  temaIcono.current = { oscuro, tema };
 
   /** Arma las capas. Se llama al cargar y cada vez que cambia el estilo base. */
   const pinta = useRef<(m: maplibregl.Map) => void>(() => {});
   pinta.current = (m: maplibregl.Map) => {
-    const borde = SUPERFICIE[tema];
-    const tinta = TINTA[tema];
-    for (const c of ["A", "B", "C"]) {
-      for (let d = 1; d <= DIAS_PIN; d++) {
-        const id = `dia-${c}-${d}`;
-        if (!m.hasImage(id)) {
-          m.addImage(id, creaDia(colorCuadrilla(c, oscuro), d, borde, tinta));
-        }
+    // Las cuadrillas que existen en cualquiera de los escenarios, no las tres
+    // de siempre: el de las cinco secretarías tiene una cuarta, y sin su icono
+    // sus 24 sedes salían pintadas del color de la A.
+    const diasPin = Math.max(
+      DIAS_PIN,
+      ...(plan?.escenarios.map((e) => e.dias_campo) ?? []),
+    );
+    for (const c of Object.keys(COLOR_CUADRILLA)) {
+      for (let d = 1; d <= diasPin; d++) {
+        aseguraIcono(m, `dia-${c}-${d}`, oscuro, tema);
+        aseguraIcono(m, `meta-${c}-${d}`, oscuro, tema);
       }
-      if (!m.hasImage(`cama-${c}`)) {
-        m.addImage(`cama-${c}`, creaCama(colorCuadrilla(c, oscuro), borde));
-      }
-      if (!m.hasImage(`movil-${c}`)) {
-        m.addImage(`movil-${c}`, creaMovil(colorCuadrilla(c, oscuro), c, borde));
-      }
-      for (let d = 1; d <= DIAS_PIN; d++) {
-        if (!m.hasImage(`meta-${c}-${d}`)) {
-          m.addImage(`meta-${c}-${d}`, creaMeta(colorCuadrilla(c, oscuro), d, borde));
-        }
-      }
+      aseguraIcono(m, `cama-${c}`, oscuro, tema);
+      aseguraIcono(m, `movil-${c}`, oscuro, tema);
     }
-    if (!m.hasImage("dia-apagado")) {
-      m.addImage("dia-apagado", creaDia(APAGADO[tema], 0, borde, borde));
-    }
-    if (!m.hasImage("cama-apagada")) {
-      m.addImage("cama-apagada", creaCama(APAGADO[tema], borde));
-    }
-    if (!m.hasImage("base-salida")) {
-      m.addImage("base-salida", creaBase(GRAFITO[tema], borde));
-    }
+    aseguraIcono(m, "dia-apagado", oscuro, tema);
+    aseguraIcono(m, "cama-apagada", oscuro, tema);
+    aseguraIcono(m, "base-salida", oscuro, tema);
 
     if (!m.getSource("municipios")) {
       // Debajo de los nombres del mapa base, para que el velo no tape las
@@ -449,7 +629,11 @@ export default function MapaPlan({
           "fill-color": GRAFITO[tema],
           // El certificado lleva velo cero y no se filtra fuera: tiene que
           // seguir respondiendo al cursor para decir de quién es.
-          "fill-opacity": ["case", ["get", "se_valle"], VELO_SE[tema], 0],
+          "fill-opacity": [
+            "case",
+            ["get", "se_valle"], VELO_SE[tema],
+            0,
+          ],
         },
       }, debajo);
       m.addLayer({
@@ -474,6 +658,79 @@ export default function MapaPlan({
           "line-opacity": 0.8,
         },
       }, debajo);
+      // El filtro real lo pone el efecto de abajo, que sabe qué secretarías
+      // aporta el escenario. Aquí arranca vacío para que nada parpadee antes.
+      m.addLayer({
+        id: "municipios-otras",
+        type: "line",
+        source: "municipios",
+        filter: ["==", ["get", "contorno_secretaria"], "__ninguna__"],
+        layout: { "line-join": "round" },
+        paint: {
+          "line-color": GRAFITO[tema],
+          "line-width": ["interpolate", ["linear"], ["zoom"], 7, 1.2, 11, 2],
+          "line-dasharray": [3, 2],
+          "line-opacity": 0.8,
+        },
+      }, debajo);
+    }
+
+    if (!m.getSource("lista-limites")) {
+      const debajo = m.getStyle().layers.find((c) => c.type === "symbol")?.id;
+      m.addSource("lista-limites", {
+        type: "geojson",
+        data: new URL(LIMITES_LISTA, window.location.href).href,
+      });
+      // Un velo casi invisible: está para que el cursor sepa sobre qué
+      // secretaría está, no para pintar.
+      m.addLayer({
+        id: "lista-limites-velo", type: "fill", source: "lista-limites",
+        filter: ["!", ["has", "etiqueta"]],
+        layout: { visibility: "none" },
+        paint: { "fill-color": GRAFITO[tema], "fill-opacity": 0.03 },
+      }, debajo);
+      m.addLayer({
+        id: "lista-limites-linea", type: "line", source: "lista-limites",
+        filter: ["!", ["has", "etiqueta"]],
+        layout: { visibility: "none", "line-join": "round" },
+        paint: {
+          "line-color": GRAFITO[tema],
+          "line-width": ["interpolate", ["linear"], ["zoom"], 5, 0.8, 10, 1.8],
+          "line-opacity": 0.75,
+        },
+      }, debajo);
+      m.addSource("lista", { type: "geojson", data: VACIA as never });
+      m.addLayer({
+        id: "lista-punto", type: "circle", source: "lista",
+        layout: { visibility: "none", "circle-sort-key": ["get", "orden"] },
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 2.2, 8, 3.8, 12, 7],
+          "circle-color": ["get", "color"],
+          "circle-opacity": ["case", ["get", "apagada"], 0.18, 0.95],
+          "circle-stroke-color": ["get", "borde"],
+          // El borde crece con el zoom: de lejos un anillo grueso vuelve
+          // mancha a un grupo de sedes.
+          "circle-stroke-width": ["interpolate", ["linear"], ["zoom"],
+            5, ["*", ["get", "ancho"], 0.55], 9, ["get", "ancho"]],
+          "circle-stroke-opacity": ["case", ["get", "apagada"], 0.25, 1],
+        },
+      });
+      m.addLayer({
+        id: "lista-limites-nombre", type: "symbol", source: "lista-limites",
+        filter: ["has", "etiqueta"],
+        layout: {
+          visibility: "none",
+          "text-field": ["get", "secretaria"],
+          "text-size": 11,
+          "text-font": ["Montserrat Medium", "Open Sans Bold", "Noto Sans Regular"],
+          "symbol-placement": "point",
+        },
+        paint: {
+          "text-color": GRAFITO[tema],
+          "text-halo-color": SUPERFICIE[tema],
+          "text-halo-width": 1.4,
+        },
+      });
     }
 
     if (!m.getSource("tramos")) {
@@ -504,7 +761,8 @@ export default function MapaPlan({
         id: "tramos-manana",
         type: "line",
         source: "tramos",
-        filter: ["==", ["get", "momento"], "manana"],
+        // El tramo entre dos escuelas del mismo día también es trabajo.
+        filter: ["!=", ["get", "momento"], "tarde"],
         layout: { "line-cap": "round", "line-join": "round" },
         paint: { "line-color": ["get", "color"], "line-width": ancho,
                  "line-opacity": 0.9 },
@@ -551,7 +809,12 @@ export default function MapaPlan({
         layout: {
           "icon-image": ["get", "icono"],
           "icon-size": ["case", ["get", "elegida"], 0.68, 0.5],
+          "icon-offset": ["match", ["get", "desfase"],
+            "izq", ["literal", [-16, 0]],
+            "der", ["literal", [16, 0]],
+            ["literal", [0, 0]]],
           "icon-allow-overlap": true,
+          "icon-ignore-placement": true,
         },
       });
       m.on("click", "sedes-punto", (e) => {
@@ -605,7 +868,10 @@ export default function MapaPlan({
     m.setPadding(margenPanel());
     m.addControl(new maplibregl.NavigationControl({ showCompass: false }),
                  "bottom-right");
-    m.addControl(new ControlInicio(() => alSeleccionar.current(null)),
+    m.addControl(new ControlInicio((mm) => {
+      alSeleccionar.current(null);
+      encuadrePlan.current(mm);
+    }),
                  "bottom-right");
     m.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-right");
     mapa.current = m;
@@ -613,6 +879,10 @@ export default function MapaPlan({
       listo.current = true;
       pinta.current(m);
       setCapasListas((x) => x + 1);
+    });
+    m.on("styleimagemissing", (e) => {
+      const t = temaIcono.current;
+      aseguraIcono(m, e.id, t.oscuro, t.tema);
     });
 
     // Un solo globo para las dos cosas que responden al cursor. Encima de una
@@ -622,6 +892,35 @@ export default function MapaPlan({
       closeButton: false, closeOnClick: false, offset: 10,
     });
     m.on("mousemove", (e) => {
+      if (modoRef.current === "lista") {
+        if (!m.getLayer("lista-punto")) return;
+        const s = m.queryRenderedFeatures(e.point, { layers: ["lista-punto"] })[0];
+        if (s) {
+          m.getCanvas().style.cursor = "pointer";
+          globo.setLngLat(e.lngLat).setDOMContent(
+            globoLista(s.properties as Record<string, unknown>)).addTo(m);
+          return;
+        }
+        m.getCanvas().style.cursor = "";
+        const f = m.queryRenderedFeatures(e.point, { layers: ["lista-limites-velo"] })[0];
+        const r = f && listaRef.current?.resumen.find(
+          (x) => x.secretaria === f.properties?.secretaria);
+        if (!r) {
+          globo.remove();
+          return;
+        }
+        const nodo = document.createElement("div");
+        const t = document.createElement("div");
+        t.style.fontWeight = "600";
+        t.textContent = `Secretaría ${r.secretaria}`;
+        const l = document.createElement("div");
+        l.style.fontSize = "11px";
+        l.style.color = "var(--tinta-2)";
+        l.textContent = `${r.sedes} sedes en la lista del MEN · ${r.rural_pct} % rurales`;
+        nodo.append(t, l);
+        globo.setLngLat(e.lngLat).setDOMContent(nodo).addTo(m);
+        return;
+      }
       if (!m.getLayer("municipios-velo")) return;
       const pin = m.getLayer("sedes-punto")
         ? m.queryRenderedFeatures(e.point, { layers: ["sedes-punto"] })[0]
@@ -640,6 +939,7 @@ export default function MapaPlan({
       }
       const p = f.properties as {
         municipio: string; se_valle: boolean; sedes_plan: number;
+        secretaria_plan?: string;
       };
       const n = Number(p.sedes_plan);
       const nodo = document.createElement("div");
@@ -649,9 +949,12 @@ export default function MapaPlan({
       const linea = document.createElement("div");
       linea.style.fontSize = "11px";
       linea.style.color = "var(--tinta-2)";
+      const cuantas = n === 0 ? "ninguna sede" : n === 1 ? "1 sede" : `${n} sedes`;
       linea.textContent = String(p.se_valle) === "true"
-        ? `SE del Valle · ${n === 0 ? "ninguna sede" : n === 1 ? "1 sede" : `${n} sedes`} del plan`
-        : "Secretaría propia · fuera de la SE del Valle";
+        ? `SE del Valle · ${cuantas} del plan`
+        : p.secretaria_plan
+          ? `Secretaría de ${p.secretaria_plan} · ${cuantas} del plan`
+          : "Secretaría propia · sin sedes en el plan";
       nodo.append(titulo, linea);
       globo.setLngLat(e.lngLat).setDOMContent(nodo).addTo(m);
     });
@@ -676,6 +979,109 @@ export default function MapaPlan({
     });
   }, [tema]);
 
+  // Solo las secretarías que el escenario usa. El contorno punteado y la
+  // sombra de una secretaría existen para decir «de aquí salen sedes del
+  // plan»; en un escenario donde no sale ninguna, dibujarlas afirma algo que
+  // el plan no dice. La del Valle no entra aquí: es el territorio de fondo y
+  // va siempre.
+  const claveSecretarias = [...secretariasPlan].sort().join("|");
+  useEffect(() => {
+    const m = mapa.current;
+    if (!m || !listo.current || !m.getLayer("municipios-otras")) return;
+    const otras = claveSecretarias ? claveSecretarias.split("|") : [];
+    // `in` con lista vacía no es «ninguna»: en MapLibre puede dejar pasar
+    // todas. El de 43 y el de 70 no deben pintar Buga ni Cartago.
+    m.setFilter(
+      "municipios-otras",
+      otras.length > 0
+        ? ["in", ["get", "contorno_secretaria"], ["literal", otras]]
+        : ["==", ["get", "contorno_secretaria"], "__ninguna__"],
+    );
+    m.setPaintProperty(
+      "municipios-velo",
+      "fill-opacity",
+      otras.length > 0
+        ? [
+            "case",
+            ["get", "se_valle"], VELO_SE[tema],
+            ["in", ["get", "secretaria_plan"], ["literal", otras]], VELO_OTRA[tema],
+            0,
+          ]
+        : ["case", ["get", "se_valle"], VELO_SE[tema], 0],
+    );
+  }, [claveSecretarias, tema, capasListas]);
+
+  // El modo: prende las capas de un lado y apaga las del otro. Al entrar a la
+  // lista el mapa se aleja hasta que caben todas sus sedes; al volver al plan,
+  // vuelve a la vista de entrada.
+  const modoPrevio = useRef<string | null>(null);
+  useEffect(() => {
+    const m = mapa.current;
+    if (!m || !listo.current) return;
+    for (const c of m.getStyle().layers) {
+      const fuente = "source" in c ? String(c.source) : "";
+      const ver = FUENTES_LISTA.includes(fuente) ? modo === "lista"
+        : FUENTES_PLAN.includes(fuente) ? modo === "plan" : null;
+      if (ver !== null) m.setLayoutProperty(c.id, "visibility", ver ? "visible" : "none");
+    }
+    if (modoPrevio.current !== null && modoPrevio.current !== modo && modo === "plan") {
+      encuadrePlan.current(m);
+    }
+    modoPrevio.current = modo;
+  }, [modo, capasListas]);
+
+  // Las sedes de la lista, con su color, su borde y lo que se resalta.
+  const claveLista = [...ocultasLista].sort().join("|");
+  const claveResalte = [...resaltes].sort().join("|");
+  const encuadreLista = useRef("");
+  useEffect(() => {
+    const m = mapa.current;
+    if (!m || !listo.current || !lista) return;
+    const feats = lista.sedes
+      .filter((s) => s.lat !== null && s.lon !== null)
+      .map((s) => {
+        const oculta = ocultasLista.includes(s.secretaria);
+        const apagada = oculta || (resaltes.length > 0 && !resaltes.some((r) => cumple(s, r)));
+        const b = BORDE[s.calidad];
+        return {
+          type: "Feature" as const,
+          geometry: { type: "Point" as const, coordinates: [s.lon, s.lat] },
+          properties: {
+            ...s,
+            color: colorDe(s, colorLista, oscuro),
+            borde: b.tono ? (oscuro ? b.tono.oscuro : b.tono.claro) : SUPERFICIE[tema],
+            ancho: b.tono ? b.ancho : 0.8,
+            apagada,
+            // Lo apagado abajo, lo que tiene borde arriba.
+            orden: (apagada ? 0 : 10) + b.ancho,
+          },
+        };
+      });
+    (m.getSource("lista") as maplibregl.GeoJSONSource)?.setData({
+      type: "FeatureCollection", features: feats as never,
+    });
+    if (modo !== "lista") return;
+    const clave = `${modo}|${claveLista}`;
+    if (encuadreLista.current === clave) return;
+    encuadreLista.current = clave;
+    const caja = new maplibregl.LngLatBounds();
+    for (const f of feats) {
+      if (!ocultasLista.includes(f.properties.secretaria)) {
+        caja.extend(f.geometry.coordinates as [number, number]);
+      }
+    }
+    if (!caja.isEmpty()) {
+      m.setPadding(SIN_MARGEN);
+      const ancho = window.innerWidth >= 768;
+      m.fitBounds(caja, {
+        padding: ancho ? { top: 60, right: 60, bottom: 40, left: MARGEN_PANEL.left + 30 }
+          : { top: 60, right: 20, bottom: Math.round(window.innerHeight * 0.4), left: 20 },
+        maxZoom: 11, duration: 800,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lista, modo, colorLista, claveLista, claveResalte, oscuro, tema, capasListas]);
+
   // Las líneas, las escuelas y los poblados. Se recalculan enteros en cada
   // cambio: son 43 escuelas y unos cientos de tramos, así que no hay nada que
   // optimizar y sí mucho que enredar.
@@ -684,6 +1090,14 @@ export default function MapaPlan({
     if (!m || !listo.current || !plan || !tramos) return;
 
     const suya = (c: string) => cuadrilla === null || c === cuadrilla;
+    const delEscenario = plan.sedes.filter((s) => s.escenario === escenario);
+    // Los días que tocan la secretaría escogida. Un día de dos visitas puede
+    // juntar dos secretarías, y entonces cuenta para las dos.
+    const deLaSecretaria = (s: (typeof delEscenario)[number]) =>
+      !ocultas.includes(secretariaDe(s));
+    const diasSuyos = new Set(
+      delEscenario.filter(deLaSecretaria).map((s) => `${s.cuadrilla}-${s.dia_corrido}`),
+    );
 
     // Lo apagado se apaga por COLOR y no por opacidad: `line-opacity` con
     // expresión de dato no es de fiar entre versiones de MapLibre, y un tramo
@@ -693,6 +1107,7 @@ export default function MapaPlan({
         const p = r.properties;
         if (reposo) return false;
         if (p.escenario !== escenario || !suya(p.cuadrilla)) return false;
+        if (!diasSuyos.has(`${p.cuadrilla}-${p.dia_corrido}`)) return false;
         return diaActual === null || p.dia_corrido <= diaActual;
       })
       .map((r) => {
@@ -715,15 +1130,21 @@ export default function MapaPlan({
       type: "FeatureCollection", features: lineas as never,
     });
 
-    const delEscenario = plan.sedes.filter((s) => s.escenario === escenario);
+    for (const s of delEscenario) {
+      aseguraIcono(m, `dia-${s.cuadrilla}-${s.dia_corrido}`, oscuro, tema);
+      aseguraIcono(m, `meta-${s.cuadrilla}-${s.dia_corrido}`, oscuro, tema);
+    }
 
+    const desfases = desfasePines(delEscenario);
     const sedes = delEscenario.map((s) => {
       // Una escuela se prende cuando ya se visitó. Antes está ahí pero apagada:
       // borrarla diría que no existe, y prenderla diría que ya se hizo.
       const hecha = diaActual === null || reposo ||
         visitadas.has(s.dane_propuesto);
-      const on = hecha && suya(s.cuadrilla);
-      const meta = !hecha && suya(s.cuadrilla) && objetivos.has(s.dane_propuesto);
+      const on = hecha && suya(s.cuadrilla) && deLaSecretaria(s);
+      const meta = !hecha && suya(s.cuadrilla) && deLaSecretaria(s) &&
+        objetivos.has(s.dane_propuesto);
+      const [ox] = desfases.get(s.dane_propuesto) ?? [0, 0];
       return {
         type: "Feature" as const,
         geometry: { type: "Point" as const, coordinates: [s.lon_final, s.lat_final] },
@@ -735,6 +1156,7 @@ export default function MapaPlan({
               ? `meta-${s.cuadrilla}-${s.dia_corrido}`
               : "dia-apagado",
           elegida: s.dane_propuesto === seleccion,
+          desfase: ox < 0 ? "izq" : ox > 0 ? "der" : "",
           // Lo que dice el globo al pasar el cursor.
           nombre: s.sede,
           municipio: s.municipio,
@@ -757,7 +1179,7 @@ export default function MapaPlan({
     for (const s of delEscenario) {
       if (reposo || !s.fuera_de_base) continue;
       if (diaActual !== null && (s.semana - 1) * 5 + s.dia > diaActual) continue;
-      const on = suya(s.cuadrilla);
+      const on = suya(s.cuadrilla) && deLaSecretaria(s);
       const ya = porPoblado.get(s.duerme_en);
       if (!ya || (on && !ya.on)) {
         porPoblado.set(s.duerme_en, { cuadrilla: s.cuadrilla, on });
@@ -788,7 +1210,17 @@ export default function MapaPlan({
         })) as never,
     });
   }, [plan, tramos, escenario, diaActual, visitadas, objetivos, reposo, cuadrilla,
-      seleccion, oscuro, tema, capasListas]);
+      ocultas, seleccion, oscuro, tema, capasListas]);
+
+  // Encuadra las sedes del escenario que se mira, también al filtrar
+  // secretaría. Antes el cambio de alcance no movía la cámara y las de Buga o
+  // Cartago se podían quedar detrás del panel.
+  const claveFiltro = [...ocultas].sort().join("|");
+  useEffect(() => {
+    const m = mapa.current;
+    if (!m || !listo.current || !plan || simulando || modo === "lista") return;
+    encuadraCaja(m, cajaDeSedes(plan, escenario, ocultas));
+  }, [escenario, claveFiltro, plan, capasListas, simulando, modo]);
 
   // Los móviles, aparte y en su propio efecto: se mueven sesenta veces por
   // segundo y no tienen por qué arrastrar el recálculo de todo lo demás.
@@ -844,7 +1276,7 @@ export default function MapaPlan({
     if (!m || !listo.current || !plan || !tramos) return;
     if (!simulando) {
       if (encuadrado.current) {
-        m.easeTo({ ...vistaInicial(), padding: margenPanel(), duration: 700 });
+        encuadrePlan.current(m);
         encuadrado.current = false;
       }
       return;

@@ -89,6 +89,14 @@ export default function FichaPlan({
         <Bloque titulo="Identificación">
           <Dato k="código DANE" v={sede.dane_propuesto} />
           <Dato k="municipio" v={sede.municipio} />
+          {sede.grupo && sede.grupo !== "BID (43)" && (
+            <Dato k="la aporta" v={`Secretaría de ${sede.grupo}`} />
+          )}
+          {sede.en_revision && (
+            <p className="text-[10px]" style={{ color: "var(--critico)" }}>
+              Coordenada provisional, en revisión.
+            </p>
+          )}
           <Dato k="dirección" v={sede.direccion ?? "—"} />
           {sede.zona_libro && <Dato k="zona" v={sede.zona_libro.toLowerCase()} />}
           {sede.matricula_libro != null && (
@@ -121,8 +129,16 @@ export default function FichaPlan({
             </div>
           ) : (
             <p className="text-[11px]" style={{ color: "var(--tinta-2)" }}>
-              Sin concepto técnico en el tablero.
+              Sin concepto técnico en el tablero del Valle.
             </p>
+          )}
+          {sede.estado_men_actual && (
+            <Dato
+              k="según el MEN"
+              v={`${sede.estado_men_actual.toLowerCase()}${
+                sede.nivel_men_actual ? ` · nivel ${sede.nivel_men_actual.toLowerCase()}` : ""
+              }`}
+            />
           )}
           {sede.fichas && sede.fichas.length > 0 && (
             <ul className="mt-1 flex flex-col gap-0.5 text-[11px]">

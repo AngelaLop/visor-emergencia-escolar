@@ -1,20 +1,15 @@
-/** El plan de campo de las 43 sedes: tipos y carga.
+/** El plan de campo: tipos y carga.
  *
- * Los archivos los escribe el script 78 del repositorio de análisis. Aquí no se
- * calcula nada: lo que llega son tres planes ya resueltos al óptimo y los
- * trazados de carretera con los que se dibujaron. Esta capa solo los tipa y los
- * agrupa.
+ * Los archivos los escribe el script 84 del repositorio de análisis. Aquí no se
+ * calcula nada: lo que llega son planes ya resueltos y los trazados de carretera
+ * con los que se dibujaron. Esta capa solo los tipa y los agrupa.
  *
- * Por qué son tres planes y no uno. Lo que el TdR fija son 3 cuadrillas, 5
- * visitas por cuadrilla por semana y 3 semanas de campo. Cinco visitas en cinco
- * días son una visita por día, así que dentro del día no hay recorrido que
- * optimizar. Lo único que mueve el total es dónde duerme la cuadrilla, y eso
- * depende de lo que cueste una noche de hotel, que no sabemos. Los tres
- * escenarios son el mismo modelo con distintos sitios permitidos para dormir:
- *
- *   base       vuelve a Cali o a Pereira todas las noches
- *   ciudad     duerme en la ciudad principal más cercana del corredor
- *   municipio  duerme en la cabecera del municipio, o en una ciudad si conviene
+ * Por qué son varios planes y no uno. No son variantes del mismo trabajo: son
+ * alcances distintos. Las 43 sedes que pidió el BID, esas más las que aportan
+ * tres secretarías certificadas, y las 91 de las cinco, que se cubren de dos
+ * formas: una cuarta cuadrilla o una cuarta semana. El de 70 es la
+ * recomendación. Cambia el número de sedes, de cuadrillas y de días de campo,
+ * así que nada de eso se puede suponer: cada escenario lo trae en su resumen.
  *
  * Por qué vive aparte de `datos.ts`. Ese archivo carga el mapa de la emergencia,
  * que responde «a dónde mandar a alguien a mirar primero». El plan responde otra
@@ -23,8 +18,14 @@
  * archivo que habla de 52.823.
  */
 
-/** Cuál de los tres planes se está mirando. */
-export type Escenario = "base" | "ciudad" | "municipio";
+/** Cuál de los planes se está mirando.
+ *
+ * Antes era el reparto de las cuadrillas (por municipio o sede por sede).
+ * Desde el 17-sep-2026 el reparto libre se retiró y la palabra pasó a
+ * significar el alcance: hasta dónde llega el plan. Las claves las fija el
+ * script 84 y el visor no las conoce de antemano, así que van como texto y el
+ * rótulo viaja con los datos. */
+export type Escenario = string;
 
 /** Una sede con su día asignado, dónde se duerme, y todo lo que se puede saber
  *  sin ir. Hay una fila por sede y por escenario. */
@@ -43,7 +44,7 @@ export type SedePlan = {
   cuadrilla: string;
   semana: number;
   dia: number;
-  /** El día de campo del 1 al 15. Es el número que va escrito en el pin. */
+  /** El día de campo, corrido. Es el número que va escrito en el pin. */
   dia_corrido: number;
   /** El poblado de donde sale esa mañana y donde duerme esa noche. En el
    *  escenario de base los dos son su propia base. */
@@ -59,10 +60,10 @@ export type SedePlan = {
   /** Ida y vuelta desde la base, por separado: la matriz es asimétrica y el
    *  doble de la ida no es el viaje redondo. `min_piso` y `min_techo` son el
    *  rango que dejaron los tres motores de ruteo sobre la ida. */
-  min_ida_desde_base: number;
-  min_vuelta_a_base: number;
-  min_piso: number;
-  min_techo: number;
+  min_ida_desde_base: number | null;
+  min_vuelta_a_base: number | null;
+  min_piso: number | null;
+  min_techo: number | null;
 
   /** Por dónde se entra. */
   tipo_acceso: string | null;
@@ -109,6 +110,31 @@ export type SedePlan = {
   observacion_rector: string | null;
   fichas: FichaAis[] | null;
   fotos_reporte: FotoReporte[] | null;
+
+  /** Del plan ampliado: la posición de la visita en su día (1 o 2), de qué
+   *  grupo viene (las 43 del BID o la secretaría que la aporta), si su
+   *  coordenada es provisional, y el estado en la capa actual del MEN, que es
+   *  la única fuente de estado para las sedes que no son del Valle. */
+  orden_en_el_dia?: number;
+  grupo?: string;
+  en_revision?: boolean;
+  estado_men_actual?: string | null;
+  nivel_men_actual?: string | null;
+};
+
+/** Un día de una cuadrilla, con sus visitas en orden. */
+export type DiaPlan = {
+  escenario: Escenario;
+  cuadrilla: string;
+  dia_corrido: number;
+  semana: number;
+  dia: number;
+  visitas: string[];
+  sale_de: string;
+  duerme_en: string;
+  fuera_de_base: boolean;
+  min_carretera: number;
+  km: number;
 };
 
 export type Concepto =
@@ -157,19 +183,60 @@ export type Bloque = {
   recorrido: string;
 };
 
+/** Lo que trabaja una cuadrilla en un día promedio del plan. */
+export type JornadaCuadrilla = {
+  cuadrilla: string;
+  dias: number;
+  min_carretera_media: number;
+  min_inspeccion_media: number;
+  min_jornada_media: number;
+};
+
 export type ResumenEscenario = {
   escenario: Escenario;
+  /** El nombre corto que va en el botón. */
+  rotulo: string;
   glosa: string;
+  /** La forma del escenario. Cambian los tres, así que la pantalla no puede
+   *  suponer ninguno: 43, 70 o 91 sedes; 3 cuadrillas o 4; 14, 15 o 20 días. */
+  sedes: number;
+  cuadrillas: number;
+  dias_campo: number;
+  bases: Record<string, string>;
+  /** Si cabe en lo que fija el TdR: 3 cuadrillas por 3 semanas. */
+  en_tdr: boolean;
+  /** Con el regreso final a la base, que no ocupa un día hábil pero se maneja.
+   *  Es lo comparable con `cota_horas`. `horas_dias` es lo que suma el
+   *  contador de la simulación, que recorre los días y no el regreso. */
   horas_carretera: number;
+  horas_dias: number;
+  horas_regreso: number;
   /** La cota que el solucionador demuestra cuando no alcanzó a probar el
    *  óptimo. Si hay un plan mejor, no baja de aquí. */
   cota_horas: number;
   optimo_probado: boolean;
   noches_fuera: number;
   km: number;
+  /** Las noches que hay que pagar: las de días de campo que terminan fuera de
+   *  la base más las de fin de semana, porque el plan no devuelve la cuadrilla
+   *  a su casa el viernes. Es lo que va a la cotización; `noches_fuera` deja
+   *  las de fin de semana por fuera y se queda corto. */
+  noches_hotel: number;
   dias_apretados: number;
   min_dia_mediano: number;
   min_dia_peor: number;
+  /** Minutos supuestos de una inspección. Es nuestro, no del TdR. */
+  inspeccion_min: number;
+  /** 3 h por sede visitada. Hereda el supuesto de `inspeccion_min`. */
+  horas_inspeccion: number;
+  /** Carretera (con el regreso a la base) más la inspección. */
+  horas_campo: number;
+  /** Jornada diaria: carretera más inspección de ese día. En minutos. */
+  min_jornada_media: number;
+  min_jornada_mediana: number;
+  min_jornada_peor: number;
+  /** Promedio diario de cada cuadrilla, para ver el reparto manejar / mirar. */
+  cuadrillas_jornada: JornadaCuadrilla[];
 };
 
 export type Lugar = {
@@ -183,17 +250,23 @@ export type Lugar = {
 
 export type Plan = {
   generado: string;
+  /** Lo que fija el TdR y no depende del escenario. Cuántas sedes, cuántas
+   *  cuadrillas y cuántos días son de cada escenario y van en su resumen. */
   tdr: {
     cuadrillas: number;
     semanas_campo: number;
     visitas_por_semana: number;
-    sedes: number;
     cupos: number;
+    inspeccion_min?: number;
+    jornada_min?: number;
   };
   escenarios: ResumenEscenario[];
   bloques: Bloque[];
   sedes: SedePlan[];
   lugares: Lugar[];
+  dias: DiaPlan[];
+  /** La copia de la capa del MEN de donde sale el estado de las sedes nuevas. */
+  men_actual?: string;
   /** Cuándo se consultó el tablero del Valle y desde cuándo no cambia. */
   tablero_valle: { consultado: string; sin_cambios_desde: string };
 };
@@ -209,10 +282,12 @@ export type TramoPlan = {
   cuadrilla: string;
   semana: number;
   dia: number;
-  /** El día corrido del 1 al 15, que es el eje de la reproducción. Lo calcula
-   *  el script 78 para que el número sea el mismo en el informe y en pantalla. */
+  /** El día corrido, que es el eje de la reproducción. Lo calcula el script 84
+   *  para que el número sea el mismo en el informe y en pantalla. */
   dia_corrido: number;
-  momento: "manana" | "tarde";
+  momento: "manana" | "entre" | "tarde";
+  /** La posición del tramo dentro del día: 0, 1 y, si hay dos visitas, 2. */
+  orden: number;
   /** El poblado del otro extremo: de donde sale o donde duerme. */
   poblado: string;
   sede: string;
@@ -266,11 +341,36 @@ export const COLOR_CUADRILLA: Record<string, { claro: string; oscuro: string }> 
   A: { claro: "#2a78d6", oscuro: "#3987e5" },
   B: { claro: "#eb6834", oscuro: "#d95926" },
   C: { claro: "#1baf7a", oscuro: "#199e70" },
+  // La cuarta cuadrilla, que solo existe en el escenario de las 91 sedes.
+  //
+  // No es la cuarta casilla de la paleta de referencia. Esa es amarilla, y la
+  // propia paleta advierte que amarillo y naranja juntos no pasan el piso de
+  // todos los pares: visión normal 13,7 en claro y daltonismo 4,8 en oscuro.
+  // Un mapa es el caso de todos los pares, porque dos cuadrillas cualesquiera
+  // pueden quedar una al lado de la otra.
+  //
+  // Este violeta se buscó contra el validador hasta que pasaran las dos
+  // versiones. Con las cuatro en juego y todos los pares: daltonismo 9,2 en
+  // claro y 9,4 en oscuro, visión normal 17,2 y 17,8. El aguamarina sigue por
+  // debajo de 3:1 sobre la superficie clara, así que la regla de siempre
+  // aguanta: el color nunca va solo, la cuadrilla se rotula con su letra.
+  D: { claro: "#5d3f91", oscuro: "#6b4c9a" },
 };
 
 export function colorCuadrilla(c: string, oscuro: boolean): string {
   const par = COLOR_CUADRILLA[c] ?? COLOR_CUADRILLA.A;
   return oscuro ? par.oscuro : par.claro;
+}
+
+/** Un decimal con coma, que es como se escribe un número en español.
+ *
+ * Existe porque `toFixed` siempre devuelve punto y la pantalla mezclaba las dos
+ * formas: la tarjeta de resumen decía «72.7 h» y la de supuestos, «72,8 h», en
+ * la misma columna y a dos centímetros de distancia. Las coordenadas de la ficha
+ * siguen con punto a propósito: «3,45678, -76,12345» no se sabe dónde parte.
+ */
+export function coma(n: number, decimales = 1): string {
+  return n.toFixed(decimales).replace(".", ",");
 }
 
 /** Horas y minutos, que es como se lee una jornada. «2:35 h», no «155 min». */
@@ -297,28 +397,72 @@ export function diasDelBloque(
     .sort((a, b) => a.dia - b.dia);
 }
 
-/** Las cuadrillas que hay, en orden. */
-export function cuadrillas(plan: Plan): string[] {
-  return [...new Set(plan.bloques.map((b) => b.cuadrilla))].sort();
+/** Las cuadrillas de un escenario, en orden.
+ *
+ * Por escenario y no del plan entero: el de las cinco secretarías tiene una
+ * cuarta cuadrilla y los otros no. Mirándolos todos a la vez, la D salía en la
+ * tabla de los escenarios de tres cuadrillas con ceros en todas las columnas.
+ */
+export function cuadrillas(plan: Plan, escenario?: Escenario): string[] {
+  // De los días del plan y, si no hay, de los resúmenes por semana del plan
+  // anterior, que el plan ampliado ya no trae.
+  const fuente = plan.dias?.length ? plan.dias : plan.bloques;
+  const suyos = escenario
+    ? fuente.filter((b) => b.escenario === escenario)
+    : fuente;
+  return [...new Set(suyos.map((b) => b.cuadrilla))].sort();
 }
 
 /** Un día con más de media jornada de carretera deja menos de media para
  *  inspeccionar con el formulario del IDIGER, que son dos páginas. El umbral es
  *  nuestro y no del TdR: señala el día, no lo descarta. */
+/** La secretaría de educación que responde por una sede del plan. Las 43 del
+ *  BID son todas de la SE del Valle; las demás llevan en `grupo` el nombre de
+ *  la secretaría certificada que las aporta. */
+export const SE_VALLE = "Valle del Cauca";
+export function secretariaDe(s: SedePlan): string {
+  return !s.grupo || s.grupo.startsWith("BID") ? SE_VALLE : s.grupo;
+}
+
+/** Las secretarías con sedes en el escenario, la del Valle primero y las demás
+ *  de mayor a menor número de sedes. */
+export function secretarias(plan: Plan, escenario: Escenario): [string, number][] {
+  const n = new Map<string, number>();
+  for (const s of plan.sedes) {
+    if (s.escenario !== escenario) continue;
+    const k = secretariaDe(s);
+    n.set(k, (n.get(k) ?? 0) + 1);
+  }
+  return [...n.entries()].sort((a, b) =>
+    Number(b[0] === SE_VALLE) - Number(a[0] === SE_VALLE) || b[1] - a[1]);
+}
+
 export const MIN_DIA_APRETADO = 240;
 
-export const NOMBRE_ESCENARIO: Record<Escenario, string> = {
-  base: "Vuelve a la base",
-  ciudad: "Duerme en ciudad",
-  municipio: "Duerme en el municipio",
-};
+/** El rótulo de un escenario viaja con los datos (script 84). Esto es el
+ *  recurso para cuando se pide uno que ya no está en el archivo. */
+export function nombreEscenario(plan: Plan, e: Escenario): string {
+  return plan.escenarios.find((x) => x.escenario === e)?.rotulo ?? e;
+}
+
+/** El escenario que se muestra al entrar: el recomendado, que es el más grande
+ *  que cabe en el TdR. Si un día no hubiera ninguno dentro del TdR, el primero. */
+export function escenarioPorDefecto(plan: Plan): Escenario {
+  const dentro = plan.escenarios.filter((e) => e.en_tdr);
+  const lista = dentro.length > 0 ? dentro : plan.escenarios;
+  return lista.reduce((a, b) => (b.sedes > a.sedes ? b : a)).escenario;
+}
 
 // --------------------------------------------------------------------------- //
-// La animación: recorrer el plan del día 1 al 15 y ver subir el contador
+// La animación: recorrer el plan día a día y ver subir el contador
 // --------------------------------------------------------------------------- //
 
-/** El día corrido, del 1 al 15. Las tres cuadrillas se mueven el mismo día. */
-export const DIAS_DE_CAMPO = 15;
+/** Cuántos días de campo tiene un escenario. Las cuadrillas se mueven el mismo
+ *  día, así que es el día corrido más alto del plan. Deja de ser una constante
+ *  porque cambia: 14 en el de solo BID, 15 en el recomendado. */
+export function diasDeCampo(guion: GuionDia[]): number {
+  return guion.reduce((a, g) => Math.max(a, g.diaCorrido), 0);
+}
 
 /** La jornada contra la que se mide si un día cabe.
  *
@@ -381,57 +525,86 @@ export function puntoEn(r: Recorrido, f: number): [number, number] {
   return [x1 + (x2 - x1) * p, y1 + (y2 - y1) * p];
 }
 
-/** El guion de un día para una cuadrilla: la mañana, la inspección y la tarde. */
+/** Una escuela que se visita en un día. */
+export type Visita = { dane: string; sede: string; municipio: string };
+
+/** Un paso del día: manejar un tramo o inspeccionar una escuela. */
+export type Paso =
+  | {
+      tipo: "viaje";
+      momento: "manana" | "entre" | "tarde";
+      min: number;
+      km: number;
+      rec: Recorrido | null;
+    }
+  | { tipo: "inspeccion"; dane: string };
+
+/** El guion de un día para una cuadrilla: sus tramos y sus inspecciones, en
+ *  orden. Un día tiene una o dos visitas; con dos, entre las inspecciones hay
+ *  un tramo de una escuela a la otra. */
 export type GuionDia = {
   diaCorrido: number;
   semana: number;
   dia: number;
   cuadrilla: string;
-  dane: string;
-  sede: string;
-  municipio: string;
+  visitas: Visita[];
   saleDe: string;
   duermeEn: string;
   fueraDeBase: boolean;
-  minManana: number;
-  minTarde: number;
-  kmManana: number;
-  kmTarde: number;
-  manana: Recorrido | null;
-  tarde: Recorrido | null;
+  minCarretera: number;
+  kmCarretera: number;
+  pasos: Paso[];
 };
 
-/** Arma el guion completo de un escenario, listo para reproducir. */
+/** Arma el guion completo, listo para reproducir. */
 export function armaGuion(plan: Plan, tramos: ColeccionTramos, escenario: Escenario) {
-  const porClave = new Map<string, RasgoTramo>();
+  const porDia = new Map<string, RasgoTramo[]>();
   for (const r of tramos.features) {
     const p = r.properties;
     if (p.escenario !== escenario) continue;
-    porClave.set(`${p.cuadrilla}|${p.semana}|${p.dia}|${p.momento}`, r);
+    const k = `${p.cuadrilla}|${p.dia_corrido}`;
+    porDia.set(k, [...(porDia.get(k) ?? []), r]);
   }
+  const sede = new Map(
+    plan.sedes
+      .filter((s) => s.escenario === escenario)
+      .map((s) => [s.dane_propuesto, s]),
+  );
   const guion: GuionDia[] = [];
-  for (const s of plan.sedes) {
-    if (s.escenario !== escenario) continue;
-    const k = `${s.cuadrilla}|${s.semana}|${s.dia}`;
-    const m = porClave.get(`${k}|manana`);
-    const t = porClave.get(`${k}|tarde`);
+  for (const d of plan.dias ?? []) {
+    if (d.escenario !== escenario) continue;
+    const visitas = d.visitas.map((dane) => {
+      const s = sede.get(dane);
+      return { dane, sede: s?.sede ?? dane, municipio: s?.municipio ?? "" };
+    });
+    const tr = (porDia.get(`${d.cuadrilla}|${d.dia_corrido}`) ?? []).sort(
+      (a, b) => a.properties.orden - b.properties.orden,
+    );
+    const viaje = (r: RasgoTramo): Paso => ({
+      tipo: "viaje",
+      momento: r.properties.momento,
+      min: r.properties.min,
+      km: r.properties.km,
+      rec: preparaRecorrido(r.geometry.coordinates),
+    });
+    // La secuencia del día: tramo, inspección, (tramo, inspección), tramo.
+    const pasos: Paso[] = [];
+    tr.forEach((r, i) => {
+      pasos.push(viaje(r));
+      if (i < visitas.length) pasos.push({ tipo: "inspeccion", dane: visitas[i].dane });
+    });
     guion.push({
-      diaCorrido: (s.semana - 1) * 5 + s.dia,
-      semana: s.semana,
-      dia: s.dia,
-      cuadrilla: s.cuadrilla,
-      dane: s.dane_propuesto,
-      sede: s.sede,
-      municipio: s.municipio,
-      saleDe: s.sale_de,
-      duermeEn: s.duerme_en,
-      fueraDeBase: s.fuera_de_base,
-      minManana: s.min_manana,
-      minTarde: s.min_tarde,
-      kmManana: m ? m.properties.km : 0,
-      kmTarde: t ? t.properties.km : 0,
-      manana: m ? preparaRecorrido(m.geometry.coordinates) : null,
-      tarde: t ? preparaRecorrido(t.geometry.coordinates) : null,
+      diaCorrido: d.dia_corrido,
+      semana: d.semana,
+      dia: d.dia,
+      cuadrilla: d.cuadrilla,
+      visitas,
+      saleDe: d.sale_de,
+      duermeEn: d.duerme_en,
+      fueraDeBase: d.fuera_de_base,
+      minCarretera: d.min_carretera,
+      kmCarretera: d.km,
+      pasos,
     });
   }
   return guion.sort((a, b) => a.diaCorrido - b.diaCorrido
@@ -442,53 +615,51 @@ export function armaGuion(plan: Plan, tramos: ColeccionTramos, escenario: Escena
  *
  * `t` son minutos de jornada desde que arranca el día, no una hora del reloj. No
  * se muestra una hora en pantalla porque sería inventarla: lo que está medido es
- * cuánto dura cada trayecto, no a qué hora ocurre cada cosa. Lo único fijado es
- * que la mañana se midió saliendo a las 7 y la tarde saliendo a las 4.
+ * cuánto dura cada trayecto, no a qué hora ocurre cada cosa.
  */
 export type Estado = {
-  fase: "manana" | "inspeccion" | "tarde" | "fin";
+  fase: "manana" | "inspeccion" | "entre" | "tarde" | "fin";
   punto: [number, number] | null;
   /** Minutos y kilómetros de carretera ya hechos ese día hasta el instante `t`. */
   minHechos: number;
   kmHechos: number;
+  /** Cuántas escuelas del día ya se alcanzaron. */
+  llegadas: number;
 };
 
 export function estadoEn(g: GuionDia, t: number, inspeccion: number): Estado {
-  const finManana = g.minManana;
-  const finInspeccion = finManana + inspeccion;
-  const finDia = finInspeccion + g.minTarde;
-  if (t < finManana) {
-    const f = finManana > 0 ? t / finManana : 1;
-    return {
-      fase: "manana",
-      punto: g.manana ? puntoEn(g.manana, f) : null,
-      minHechos: t,
-      kmHechos: g.kmManana * f,
-    };
+  let reloj = 0;
+  let minHechos = 0;
+  let kmHechos = 0;
+  let llegadas = 0;
+  let ultimo: [number, number] | null = null;
+  for (const p of g.pasos) {
+    if (p.tipo === "viaje") {
+      const fin = reloj + p.min;
+      if (t < fin) {
+        const f = p.min > 0 ? (t - reloj) / p.min : 1;
+        return {
+          fase: p.momento,
+          punto: p.rec ? puntoEn(p.rec, f) : ultimo,
+          minHechos: minHechos + p.min * f,
+          kmHechos: kmHechos + p.km * f,
+          llegadas,
+        };
+      }
+      reloj = fin;
+      minHechos += p.min;
+      kmHechos += p.km;
+      ultimo = p.rec ? puntoEn(p.rec, 1) : ultimo;
+    } else {
+      llegadas += 1;
+      const fin = reloj + inspeccion;
+      if (t < fin) {
+        return { fase: "inspeccion", punto: ultimo, minHechos, kmHechos, llegadas };
+      }
+      reloj = fin;
+    }
   }
-  if (t < finInspeccion) {
-    return {
-      fase: "inspeccion",
-      punto: g.manana ? puntoEn(g.manana, 1) : null,
-      minHechos: g.minManana,
-      kmHechos: g.kmManana,
-    };
-  }
-  if (t < finDia) {
-    const f = g.minTarde > 0 ? (t - finInspeccion) / g.minTarde : 1;
-    return {
-      fase: "tarde",
-      punto: g.tarde ? puntoEn(g.tarde, f) : null,
-      minHechos: g.minManana + g.minTarde * f,
-      kmHechos: g.kmManana + g.kmTarde * f,
-    };
-  }
-  return {
-    fase: "fin",
-    punto: g.tarde ? puntoEn(g.tarde, 1) : null,
-    minHechos: g.minManana + g.minTarde,
-    kmHechos: g.kmManana + g.kmTarde,
-  };
+  return { fase: "fin", punto: ultimo, minHechos, kmHechos, llegadas };
 }
 
 /** Cuánto dura el día más largo de una jornada, que es lo que hay que esperar
@@ -496,5 +667,10 @@ export function estadoEn(g: GuionDia, t: number, inspeccion: number): Estado {
 export function largoDelDia(guion: GuionDia[], diaCorrido: number, inspeccion: number) {
   const hoy = guion.filter((g) => g.diaCorrido === diaCorrido);
   if (hoy.length === 0) return 0;
-  return Math.max(...hoy.map((g) => g.minManana + inspeccion + g.minTarde));
+  return Math.max(...hoy.map((g) => jornada(g, inspeccion)));
+}
+
+/** Carretera más inspecciones de un día. */
+export function jornada(g: GuionDia, inspeccion: number) {
+  return g.minCarretera + inspeccion * g.visitas.length;
 }
