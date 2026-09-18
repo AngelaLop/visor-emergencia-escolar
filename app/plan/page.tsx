@@ -86,7 +86,18 @@ const MapaPlan = dynamic(() => import("@/components/MapaPlan"), {
  */
 const RITMOS = [120, 240, 480];
 
-const DIAS_SEMANA = ["lunes", "martes", "miércoles", "jueves", "viernes"];
+const DIAS_SEMANA = [
+  "lunes",
+  "martes",
+  "miércoles",
+  "jueves",
+  "viernes",
+  "sábado",
+];
+/** Se trabaja de lunes a sábado. El plan no cambia por esto: `dia_corrido` es
+ *  el mismo y solo se reparte distinto en semanas. Vive acá y en
+ *  `DIAS_HABILES_SEMANA` del script 86, que es de donde viene el JSON. */
+const DIAS_HABILES_SEMANA = 6;
 /** Lo que ocupa el panel de simulación con 3 filas de cuadrilla, medido en
  *  pantalla: 227 px más el margen. Cada fila extra suma 39 px (casilla más
  *  hueco). La ficha termina antes y el mapa lo descuenta al encuadrar. */
@@ -101,7 +112,7 @@ function altoSimulacion(n: number) {
  *  Vive en el ícono del título del panel, que es donde se mira mientras corre. */
 const COMO_LEER_SIMULACION = [
   "En la cuadrícula, cada columna es un día de campo y cada fila una cuadrilla. La barra de color son las horas de carretera y la gris, encima, la inspección; la línea punteada marca una jornada de 8 horas. Toca una casilla para saltar a ese día.",
-  "Al darle reproducir, el círculo grande con letra es la cuadrilla en movimiento. El número dentro del pin de una escuela es el día de campo en que se visita, contados de corrido de lunes a viernes: la semana 1 son los días 1 a 5, la 2 del 6 al 10, y así. Es el orden del recorrido, no una prioridad.",
+  "Al darle reproducir, el círculo grande con letra es la cuadrilla en movimiento. El número dentro del pin de una escuela es el día de campo en que se visita, contados de corrido de lunes a sábado: la semana 1 son los días 1 a 6, la 2 del 7 al 12, y así. Es el orden del recorrido, no una prioridad.",
   "Rombo lleno, la base. Cuadrado hueco, el poblado donde se duerme: hueco porque el plan nombra el pueblo, no el hotel.",
   "Línea llena, la ida a la escuela. Punteada, el regreso de la tarde. Las líneas son el trazado real por carretera, no rectas entre puntos. Cerca en el mapa no es cerca por carretera: hay sedes a tres kilómetros en línea recta y a media hora de camino.",
 ].join("\n\n");
@@ -130,9 +141,9 @@ function NOTA_NOCHES(
     `${diasCampoTotal} días de campo y ${resumen.noches_hotel} noches son el total de la ` +
     `campaña, sumadas las ${resumen.cuadrillas} cuadrillas. El calendario son ` +
     `${resumen.dias_campo} días; no es el mismo número.\n\n` +
-    `Se cuenta cada noche entre los días de campo de cada cuadrilla, y tres por cada fin de ` +
-    `semana de por medio, porque el plan no la devuelve el viernes. La noche del último día ` +
-    `no se cuenta: ese día se regresa.\n\n` +
+    `Se cuenta cada noche entre los días de campo de cada cuadrilla, y dos por cada domingo ` +
+    `de descanso, porque se trabaja de lunes a sábado y el plan no la devuelve el sábado. ` +
+    `La noche del último día no se cuenta: ese día se regresa.\n\n` +
     `Se cuentan todas, también las de Cali y Pereira. La base es de donde sale la cuadrilla, ` +
     `no donde vive: el TdR no dice de dónde es la gente que se contrata, así que dar por ` +
     `gratis esas noches sería descontar alojamiento que se paga.\n\n` +
@@ -952,8 +963,8 @@ function TarjetaContador({
   sedes: number;
   diasCampo: number;
 }) {
-  const semana = Math.floor((dia - 1) / 5) + 1;
-  const enSemana = ((dia - 1) % 5) + 1;
+  const semana = Math.floor((dia - 1) / DIAS_HABILES_SEMANA) + 1;
+  const enSemana = ((dia - 1) % DIAS_HABILES_SEMANA) + 1;
   return (
     <Tarjeta>
       <div className="px-3 py-2">
@@ -1304,13 +1315,13 @@ function TarjetaSupuestos({
             {JORNADA_MIN / 60} horas.
           </li>
           <li>
-            Una o dos visitas por día. La cuadrilla no vuelve a su base los
-            fines de semana: el lunes sigue desde la ciudad donde terminó el
-            viernes.
+            Una o dos visitas por día. La cuadrilla no vuelve a su base el
+            domingo de descanso: el lunes sigue desde la ciudad donde terminó el
+            sábado.
           </li>
           <li>
             {resumen
-              ? `${resumen.cuadrillas} cuadrillas durante ${resumen.dias_campo} días, de lunes a viernes. ${basesEnTexto(resumen.bases)}. ${resumen.en_tdr ? "Cabe en el TdR." : "No cabe en el TdR."}`
+              ? `${resumen.cuadrillas} cuadrillas durante ${resumen.dias_campo} días, de lunes a sábado. ${basesEnTexto(resumen.bases)}. ${resumen.en_tdr ? "Cabe en el TdR." : "No cabe en el TdR."}`
               : ""}
           </li>
           <li>
@@ -1650,7 +1661,7 @@ function BarraTiempo({
               <div className="flex min-w-0 flex-1 gap-[3px]">
                 {dias.map((d) => {
                   const esHoy = d === dia;
-                  const nuevaSemana = d % 5 === 1 && d > 1;
+                  const nuevaSemana = d % DIAS_HABILES_SEMANA === 1 && d > 1;
                   return (
                     <div
                       key={d}

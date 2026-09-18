@@ -205,6 +205,9 @@ export type ResumenEscenario = {
   bases: Record<string, string>;
   /** Si cabe en lo que fija el TdR: 3 cuadrillas por 3 semanas. */
   en_tdr: boolean;
+  /** El que abre la pantalla. Lo marca el script 84 y no se deduce acá: el
+   *  alcance elegido no es el más grande que cabe en el TdR. */
+  por_defecto?: boolean;
   /** Con el regreso final a la base, que no ocupa un día hábil pero se maneja.
    *  Es lo comparable con `cota_horas`. `horas_dias` es lo que suma el
    *  contador de la simulación, que recorre los días y no el regreso. */
@@ -445,9 +448,17 @@ export function nombreEscenario(plan: Plan, e: Escenario): string {
   return plan.escenarios.find((x) => x.escenario === e)?.rotulo ?? e;
 }
 
-/** El escenario que se muestra al entrar: el recomendado, que es el más grande
- *  que cabe en el TdR. Si un día no hubiera ninguno dentro del TdR, el primero. */
+/** El escenario que se muestra al entrar.
+ *
+ *  Lo decide el dato: el script 84 marca uno con `por_defecto` y ese abre. El
+ *  18-sep-2026 es el de las 91 sedes con cuatro cuadrillas, que no cabe en el
+ *  TdR, así que ninguna regla deducible del plan lo escogería.
+ *
+ *  Si el archivo no marca ninguno, se cae a la regla anterior: el más grande
+ *  que cabe en el TdR, y si ninguno cabe, el más grande. */
 export function escenarioPorDefecto(plan: Plan): Escenario {
+  const marcado = plan.escenarios.find((e) => e.por_defecto);
+  if (marcado) return marcado.escenario;
   const dentro = plan.escenarios.filter((e) => e.en_tdr);
   const lista = dentro.length > 0 ? dentro : plan.escenarios;
   return lista.reduce((a, b) => (b.sedes > a.sedes ? b : a)).escenario;

@@ -162,8 +162,9 @@ const GRAFITO = { claro: "#33414d", oscuro: "#d7dee4" };
 
 const VACIA = { type: "FeatureCollection", features: [] } as const;
 
-/** Piso de días que un pin puede llevar escritos. El escenario de 4 semanas
- *  tiene 20; si un plan trae más, se arma hasta ese tope. */
+/** Piso de días que un pin puede llevar escritos. El plan más largo que hay hoy
+ *  son 15 días por cuadrilla; se dejan 20 de holgura y si un plan trae más, se
+ *  arma hasta ese tope. */
 const DIAS_PIN = 20;
 
 // La cuadrilla en movimiento. Dos que quedan a menos de CHOQUE_PX en pantalla
