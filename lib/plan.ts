@@ -192,22 +192,51 @@ export type JornadaCuadrilla = {
   min_jornada_media: number;
 };
 
+/** Lo que cuesta traer las cuadrillas de otra ciudad.
+ *
+ *  Solo lo trae Risaralda. El plan es el mismo (se trabaja donde están las
+ *  sedes); lo que se suma es el viaje de la víspera y el del regreso, una vez
+ *  por cuadrilla. No lo calculó el solucionador: son dos tramos del caché de
+ *  Mapbox, así que el número no arrastra la brecha de convergencia del plan. */
+export type TrasladoContrato = {
+  desde: string;
+  hasta: string;
+  min_ida: number;
+  min_vuelta: number;
+  cuadrillas: number;
+  /** (ida + vuelta) × cuadrillas, en horas. */
+  horas: number;
+};
+
 export type ResumenEscenario = {
   escenario: Escenario;
   /** El nombre corto que va en el botón. */
   rotulo: string;
   glosa: string;
+  /** De qué contrato es. Los del Valle son alcances alternativos del mismo
+   *  pedido; el de Risaralda es otro pedido, con otras cuadrillas y otra base.
+   *  La pantalla filtra por esto antes de mostrar los botones. */
+  contrato: string;
   /** La forma del escenario. Cambian los tres, así que la pantalla no puede
    *  suponer ninguno: 43, 70 o 91 sedes; 3 cuadrillas o 4; 14, 15 o 20 días. */
   sedes: number;
   cuadrillas: number;
+  /** Cuánto dura la campaña en el calendario: las cuadrillas trabajan a la vez.
+   *  Es el eje de la simulación. */
   dias_campo: number;
+  /** Cuántos días-cuadrilla consume, que es lo que se compara contra los cupos
+   *  del contrato. No es lo mismo que `dias_campo`: en Risaralda son 13 y 37. */
+  dias_cuadrilla: number;
   bases: Record<string, string>;
-  /** Si cabe en lo que fija el TdR: 3 cuadrillas por 3 semanas. */
+  /** Si cabe en lo que acota su contrato: el TdR en el Valle (3 cuadrillas por
+   *  3 semanas), los 15 días por cuadrilla supuestos en Risaralda. */
   en_tdr: boolean;
-  /** El que abre la pantalla. Lo marca el script 84 y no se deduce acá: el
-   *  alcance elegido no es el más grande que cabe en el TdR. */
+  /** El que abre la pantalla DENTRO DE SU CONTRATO. Lo marca el script 84 y no
+   *  se deduce acá: el alcance elegido del Valle no es el más grande que cabe
+   *  en el TdR. Hay uno por contrato, no uno solo. */
   por_defecto?: boolean;
+  /** Solo en Risaralda. `null` donde las cuadrillas ya viven en su base. */
+  traslado_armenia?: TrasladoContrato | null;
   /** Con el regreso final a la base, que no ocupa un día hábil pero se maneja.
    *  Es lo comparable con `cota_horas`. `horas_dias` es lo que suma el
    *  contador de la simulación, que recorre los días y no el regreso. */
@@ -251,10 +280,35 @@ export type Lugar = {
   matricula_urbana: number | null;
 };
 
+/** Un contrato: un pedido del MEN que se contrata por separado.
+ *
+ *  `marco` es lo que lo acota, y `origen` dice de dónde sale eso. En el Valle
+ *  es «TdR», un documento. En Risaralda es «supuesto»: no hay TdR, y los 15
+ *  días de campo por cuadrilla son con lo que se planteó el problema. La
+ *  distinción va en el dato y no en el texto de la pantalla porque es la
+ *  diferencia entre una cláusula y una decisión nuestra. */
+export type Contrato = {
+  clave: string;
+  rotulo: string;
+  glosa: string;
+  por_defecto: boolean;
+  marco: {
+    origen: "TdR" | "supuesto";
+    texto: string;
+    cuadrillas: number;
+    cupos: number;
+    semanas_campo?: number;
+    visitas_por_semana?: number;
+    dias_por_cuadrilla?: number;
+    inspeccion_min: number;
+    jornada_min: number;
+  };
+};
+
 export type Plan = {
   generado: string;
-  /** Lo que fija el TdR y no depende del escenario. Cuántas sedes, cuántas
-   *  cuadrillas y cuántos días son de cada escenario y van en su resumen. */
+  /** Lo que fija el TdR del contrato del Valle. Sigue acá porque es un
+   *  documento real; lo que acota a cada contrato está en `contratos`. */
   tdr: {
     cuadrillas: number;
     semanas_campo: number;
@@ -263,6 +317,8 @@ export type Plan = {
     inspeccion_min?: number;
     jornada_min?: number;
   };
+  /** Los contratos, en el orden en que van los botones del primer nivel. */
+  contratos: Contrato[];
   escenarios: ResumenEscenario[];
   bloques: Bloque[];
   sedes: SedePlan[];
@@ -448,20 +504,50 @@ export function nombreEscenario(plan: Plan, e: Escenario): string {
   return plan.escenarios.find((x) => x.escenario === e)?.rotulo ?? e;
 }
 
-/** El escenario que se muestra al entrar.
+/** Cómo se nombra en pantalla lo que acota un contrato.
  *
- *  Lo decide el dato: el script 84 marca uno con `por_defecto` y ese abre. El
- *  18-sep-2026 es el de las 91 sedes con cuatro cuadrillas, que no cabe en el
- *  TdR, así que ninguna regla deducible del plan lo escogería.
+ *  En el Valle es el TdR, un documento. En Risaralda no hay documento: los 15
+ *  días de campo por cuadrilla son con lo que se planteó el problema. Decir
+ *  «el TdR» en los dos casos le atribuiría a Risaralda una clausula que nadie
+ *  firmó, y este texto sale en tarjetas que alguien usa para cotizar. */
+export function nombreMarco(c: Contrato | undefined): string {
+  return c?.marco.origen === "supuesto" ? "el supuesto de planeación" : "el TdR";
+}
+
+/** El contrato de un escenario. */
+export function contratoDe(
+  plan: Plan, escenario: Escenario,
+): Contrato | undefined {
+  const e = plan.escenarios.find((x) => x.escenario === escenario);
+  return plan.contratos?.find((c) => c.clave === e?.contrato);
+}
+
+/** El contrato que se muestra al entrar. Lo marca el script 84. */
+export function contratoPorDefecto(plan: Plan): string {
+  return (plan.contratos.find((c) => c.por_defecto) ?? plan.contratos[0]).clave;
+}
+
+/** Los escenarios de un contrato, en el orden en que los trae el archivo. */
+export function escenariosDe(plan: Plan, contrato: string): ResumenEscenario[] {
+  return plan.escenarios.filter((e) => e.contrato === contrato);
+}
+
+/** El escenario que abre DENTRO DE UN CONTRATO.
+ *
+ *  Lo decide el dato: el script 84 marca uno con `por_defecto` y ese abre. En
+ *  el Valle, desde el 18-sep-2026, es el de las 91 sedes con cuatro cuadrillas,
+ *  que no cabe en el TdR, así que ninguna regla deducible del plan lo
+ *  escogería. En Risaralda solo hay uno.
  *
  *  Si el archivo no marca ninguno, se cae a la regla anterior: el más grande
- *  que cabe en el TdR, y si ninguno cabe, el más grande. */
-export function escenarioPorDefecto(plan: Plan): Escenario {
-  const marcado = plan.escenarios.find((e) => e.por_defecto);
+ *  que cabe en lo que acota el contrato, y si ninguno cabe, el más grande. */
+export function escenarioPorDefecto(plan: Plan, contrato?: string): Escenario {
+  const lista = escenariosDe(plan, contrato ?? contratoPorDefecto(plan));
+  const marcado = lista.find((e) => e.por_defecto);
   if (marcado) return marcado.escenario;
-  const dentro = plan.escenarios.filter((e) => e.en_tdr);
-  const lista = dentro.length > 0 ? dentro : plan.escenarios;
-  return lista.reduce((a, b) => (b.sedes > a.sedes ? b : a)).escenario;
+  const dentro = lista.filter((e) => e.en_tdr);
+  const cuales = dentro.length > 0 ? dentro : lista;
+  return cuales.reduce((a, b) => (b.sedes > a.sedes ? b : a)).escenario;
 }
 
 // --------------------------------------------------------------------------- //

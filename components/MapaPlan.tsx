@@ -42,11 +42,11 @@
 
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { COLOR_CONCEPTO, COLOR_CUADRILLA, colorCuadrilla, secretariaDe } from "@/lib/plan";
 import type { ColeccionTramos, Concepto, Escenario, Plan } from "@/lib/plan";
-import { BORDE, colorDe, cumple } from "@/lib/lista";
+import { BORDE, colorDe, cumple, danoLeve } from "@/lib/lista";
 import type { ColorLista, ListaMen, Resalte } from "@/lib/lista";
 
 // Los dos estilos base que usa el visor. Van repetidos aquí y no importados del
@@ -99,17 +99,41 @@ function margenEncuadrePlan(): maplibregl.PaddingOptions {
   };
 }
 
-function cajaDeSedes(
+/** La caja que tiene que caber al entrar a un escenario.
+ *
+ * SON LAS SEDES Y TAMBIÉN DONDE SE DUERME. Antes eran solo las sedes, y con un
+ * solo contrato casi no se notaba: las ciudades del Valle caen entre sus
+ * escuelas. En Risaralda sí se nota. Las 60 sedes ocupan una mancha compacta y
+ * el encuadre abría demasiado cerca, dejando fuera Armenia y Cartago, que el
+ * plan usa de verdad: la cuadrilla C duerme en Armenia la noche del día 1 y la
+ * B en Cartago la del día 2. Una cuadrilla que pasa la noche fuera del mapa es
+ * justo lo que esta pantalla no puede permitirse.
+ *
+ * Se toman la salida y la dormida de cada sede visible, no la lista de
+ * poblados candidatos, para que el filtro por secretaría siga valiendo: al
+ * apagar una secretaría desaparecen sus escuelas y con ellas sus noches.
+ * También entran las bases del escenario, que pueden no tener ninguna sede
+ * cerca. */
+function cajaDelPlan(
   plan: Plan,
   escenario: Escenario,
   ocultas: string[] = [],
 ): maplibregl.LngLatBounds {
   const caja = new maplibregl.LngLatBounds();
+  const punto = new Map(plan.lugares.map((l) => [l.nombre, l]));
+  const suma = (nombre: string) => {
+    const l = punto.get(nombre);
+    if (l) caja.extend([l.lon, l.lat]);
+  };
   for (const s of plan.sedes) {
     if (s.escenario !== escenario) continue;
     if (ocultas.includes(secretariaDe(s))) continue;
     caja.extend([s.lon_final, s.lat_final]);
+    suma(s.sale_de);
+    suma(s.duerme_en);
   }
+  const resumen = plan.escenarios.find((e) => e.escenario === escenario);
+  for (const b of Object.values(resumen?.bases ?? {})) suma(b);
   return caja;
 }
 
@@ -213,6 +237,11 @@ function globoLista(p: Record<string, unknown>): HTMLElement {
 }
 const VELO_SE = { claro: 0.07, oscuro: 0.09 };
 const VELO_OTRA = { claro: 0.045, oscuro: 0.06 };
+// El velo del municipio que tiene cuadrilla asignada. Más fuerte que los dos de
+// arriba porque acá el color sí significa algo (qué cuadrilla lo trabaja) y no
+// solo «este territorio cuenta». Aun así queda por debajo del pin: el municipio
+// es el fondo y la escuela es el dato.
+const VELO_CUADRILLA = { claro: 0.17, oscuro: 0.22 };
 const LIMITE_MPIO = { claro: "#a3a29b", oscuro: "#5c5b56" };
 
 /** El contenido del globo de una escuela. Se arma con nodos y no con HTML en
@@ -306,17 +335,32 @@ export type Movil = {
  * tiene la capa no falla: desaparece en silencio. Un número que a veces no está
  * es peor que ninguno.
  */
-function creaDia(color: string, dia: number, borde: string, tinta: string): ImageData {
+function creaDia(
+  color: string, dia: number, borde: string, tinta: string, leve = false,
+): ImageData {
   const R = 2;
-  const s = 26;
+  // Con anillo el lienzo tiene que ser más grande: si no, MapLibre recorta
+  // el trazo y parece que no hay marca.
+  const s = leve ? 36 : 26;
+  const cx = s / 2;
   const c = document.createElement("canvas");
   c.width = s * R;
   c.height = s * R;
   const x = c.getContext("2d")!;
   x.scale(R, R);
 
+  if (leve) {
+    x.setLineDash([3, 2.2]);
+    x.beginPath();
+    x.arc(cx, cx, 16, 0, Math.PI * 2);
+    x.strokeStyle = "#2f8a55";
+    x.lineWidth = 2.6;
+    x.stroke();
+    x.setLineDash([]);
+  }
+
   x.beginPath();
-  x.arc(13, 13, dia > 0 ? 9.5 : 6, 0, Math.PI * 2);
+  x.arc(cx, cx, dia > 0 ? 9.5 : 6, 0, Math.PI * 2);
   x.fillStyle = color;
   x.fill();
   // El anillo de superficie de 2 px es lo que deja leer dos pines pegados, que
@@ -333,7 +377,7 @@ function creaDia(color: string, dia: number, borde: string, tinta: string): Imag
     x.font = `bold ${dia > 9 ? 11 : 12}px system-ui, sans-serif`;
     x.textAlign = "center";
     x.textBaseline = "middle";
-    x.fillText(String(dia), 13, 13.5);
+    x.fillText(String(dia), cx, cx + 0.5);
   }
   return x.getImageData(0, 0, s * R, s * R);
 }
@@ -482,9 +526,11 @@ function aseguraIcono(
     m.addImage(id, creaMeta(colorCuadrilla(meta[1], oscuro), Number(meta[2]), borde));
     return;
   }
-  const dia = /^dia-([A-Z])-(\d+)$/.exec(id);
+  const dia = /^dia-([A-Z])-(\d+)(-leve)?$/.exec(id);
   if (dia) {
-    m.addImage(id, creaDia(colorCuadrilla(dia[1], oscuro), Number(dia[2]), borde, tinta));
+    m.addImage(id, creaDia(
+      colorCuadrilla(dia[1], oscuro), Number(dia[2]), borde, tinta, Boolean(dia[3]),
+    ));
     return;
   }
   const cama = /^cama-([A-Z])$/.exec(id);
@@ -584,10 +630,17 @@ export default function MapaPlan({
       m.easeTo({ ...vistaInicial(), padding: margenPanel(), duration: 700 });
       return;
     }
-    encuadraCaja(m, cajaDeSedes(plan, escenario, ocultas));
+    encuadraCaja(m, cajaDelPlan(plan, escenario, ocultas));
   };
 
   const oscuro = tema === "oscuro";
+  // Qué cuadrilla trabaja cada municipio, y si el tema está oscuro. Los usa el
+  // globo del municipio, que se registra una sola vez: sin la ref leería lo que
+  // hubiera al crear el mapa y no lo del escenario que se está mirando. La
+  // primera se llena más abajo, junto al memo que la calcula.
+  const cuadrillaRef = useRef(new Map<string, string>());
+  const oscuroRef = useRef(oscuro);
+  oscuroRef.current = oscuro;
   const temaIcono = useRef({ oscuro, tema });
   temaIcono.current = { oscuro, tema };
 
@@ -627,12 +680,15 @@ export default function MapaPlan({
         source: "municipios",
         filter: ["has", "municipio"],
         paint: {
+          // El color y la opacidad reales los pone el efecto de abajo, que sabe
+          // qué cuadrilla trabaja cada municipio. Acá arranca en el gris de
+          // fondo para que nada parpadee antes de que llegue el plan.
           "fill-color": GRAFITO[tema],
           // El certificado lleva velo cero y no se filtra fuera: tiene que
           // seguir respondiendo al cursor para decir de quién es.
           "fill-opacity": [
             "case",
-            ["get", "se_valle"], VELO_SE[tema],
+            ["get", "principal"], VELO_SE[tema],
             0,
           ],
         },
@@ -651,7 +707,7 @@ export default function MapaPlan({
         id: "municipios-se",
         type: "line",
         source: "municipios",
-        filter: ["has", "contorno_se_valle"],
+        filter: ["has", "contorno_principal"],
         layout: { "line-join": "round" },
         paint: {
           "line-color": GRAFITO[tema],
@@ -790,17 +846,6 @@ export default function MapaPlan({
       });
     }
 
-    if (!m.getSource("bases")) {
-      m.addSource("bases", { type: "geojson", data: VACIA as never });
-      m.addLayer({
-        id: "bases-punto",
-        type: "symbol",
-        source: "bases",
-        layout: { "icon-image": "base-salida", "icon-size": 0.55,
-                  "icon-allow-overlap": true },
-      });
-    }
-
     if (!m.getSource("sedes")) {
       m.addSource("sedes", { type: "geojson", data: VACIA as never });
       m.addLayer({
@@ -833,6 +878,24 @@ export default function MapaPlan({
       m.on("click", (e) => {
         const hay = m.queryRenderedFeatures(e.point, { layers: ["sedes-punto"] });
         if (hay.length === 0) alSeleccionar.current(null);
+      });
+    }
+
+    // LAS BASES VAN DESPUÉS DE LAS SEDES, no antes. El rombo de la base es un
+    // punto fijo del que hay uno, dos o tres; los pines son sesenta y se
+    // mueven. Dibujado debajo, el de Pereira desaparecía bajo las siete sedes
+    // urbanas de Pereira en el plan de Risaralda. En el Valle no se notaba
+    // porque ni Cali ni Pereira aportan sedes, así que sus rombos quedaban
+    // sobre mapa vacío.
+    if (!m.getSource("bases")) {
+      m.addSource("bases", { type: "geojson", data: VACIA as never });
+      m.addLayer({
+        id: "bases-punto",
+        type: "symbol",
+        source: "bases",
+        layout: { "icon-image": "base-salida", "icon-size": 0.55,
+                  "icon-allow-overlap": true,
+                  "icon-ignore-placement": true },
       });
     }
 
@@ -939,8 +1002,8 @@ export default function MapaPlan({
         return;
       }
       const p = f.properties as {
-        municipio: string; se_valle: boolean; sedes_plan: number;
-        secretaria_plan?: string;
+        municipio: string; principal: boolean; sedes_plan: number;
+        secretaria_plan?: string; rotulo_se?: string;
       };
       const n = Number(p.sedes_plan);
       const nodo = document.createElement("div");
@@ -951,12 +1014,25 @@ export default function MapaPlan({
       linea.style.fontSize = "11px";
       linea.style.color = "var(--tinta-2)";
       const cuantas = n === 0 ? "ninguna sede" : n === 1 ? "1 sede" : `${n} sedes`;
-      linea.textContent = String(p.se_valle) === "true"
-        ? `SE del Valle · ${cuantas} del plan`
+      linea.textContent = String(p.principal) === "true"
+        ? `${p.rotulo_se ?? "Secretaría departamental"} · ${cuantas} del plan`
         : p.secretaria_plan
           ? `Secretaría de ${p.secretaria_plan} · ${cuantas} del plan`
           : "Secretaría propia · sin sedes en el plan";
       nodo.append(titulo, linea);
+      // Qué cuadrilla lo trabaja. Va por ref y no por la variable del efecto
+      // porque este manejador se registra una vez y la asignación cambia con
+      // el escenario: leerla de la clausura mostraría la del escenario que
+      // estuviera activo cuando se creó el mapa.
+      const c = cuadrillaRef.current.get(p.municipio);
+      if (c) {
+        const suya = document.createElement("div");
+        suya.style.fontSize = "11px";
+        suya.style.fontWeight = "600";
+        suya.style.color = colorCuadrilla(c, oscuroRef.current);
+        suya.textContent = `Cuadrilla ${c}`;
+        nodo.append(suya);
+      }
       globo.setLngLat(e.lngLat).setDOMContent(nodo).addTo(m);
     });
     m.on("mouseout", () => globo.remove());
@@ -986,31 +1062,87 @@ export default function MapaPlan({
   // el plan no dice. La del Valle no entra aquí: es el territorio de fondo y
   // va siempre.
   const claveSecretarias = [...secretariasPlan].sort().join("|");
+
+  // QUÉ CUADRILLA TRABAJA CADA MUNICIPIO. Sale del escenario activo y no del
+  // geojson: un municipio es de una sola cuadrilla (`MUNICIPIO_ENTERO` del
+  // script 86), pero de cuál depende del escenario, y hay cuatro. Congelarlo en
+  // el archivo dejaría los colores del escenario anterior al cambiar de botón.
+  //
+  // El `sort` no es cosmético. Si un municipio llegara partido entre dos
+  // cuadrillas, sin orden el color saldría distinto en cada render según el
+  // orden de las filas. Con orden, sale siempre el mismo y el error se ve.
+  const contratoActivo = plan?.escenarios.find(
+    (e) => e.escenario === escenario)?.contrato ?? "";
+  const cuadrillaPorMunicipio = useMemo(() => {
+    const m = new Map<string, string>();
+    if (!plan) return m;
+    for (const s of plan.sedes) {
+      if (s.escenario !== escenario) continue;
+      const ya = m.get(s.municipio);
+      if (!ya || s.cuadrilla < ya) m.set(s.municipio, s.cuadrilla);
+    }
+    return m;
+  }, [plan, escenario]);
+  cuadrillaRef.current = cuadrillaPorMunicipio;
+  const claveMunicipios = [...cuadrillaPorMunicipio.entries()]
+    .sort().map(([k, v]) => `${k}:${v}`).join("|");
+
   useEffect(() => {
     const m = mapa.current;
     if (!m || !listo.current || !m.getLayer("municipios-otras")) return;
     const otras = claveSecretarias ? claveSecretarias.split("|") : [];
+    const pares = claveMunicipios
+      ? claveMunicipios.split("|").map((x) => x.split(":") as [string, string])
+      : [];
+    const conCuadrilla = pares.map(([mun]) => mun);
+
+    // SOLO LOS MUNICIPIOS DEL CONTRATO QUE SE ESTÁ MIRANDO. El geojson trae los
+    // dos departamentos; sin este filtro, estando en Risaralda se veía el velo
+    // del Valle entero a 200 km del recorrido.
+    const delContrato = ["==", ["get", "contrato"], contratoActivo] as never;
+    m.setFilter("municipios-velo", ["all", ["has", "municipio"], delContrato]);
+    m.setFilter("municipios-limite", ["all", ["has", "municipio"], delContrato]);
+    m.setFilter("municipios-se",
+                ["all", ["has", "contorno_principal"], delContrato]);
     // `in` con lista vacía no es «ninguna»: en MapLibre puede dejar pasar
     // todas. El de 43 y el de 70 no deben pintar Buga ni Cartago.
     m.setFilter(
       "municipios-otras",
       otras.length > 0
-        ? ["in", ["get", "contorno_secretaria"], ["literal", otras]]
+        ? ["all", delContrato,
+           ["in", ["get", "contorno_secretaria"], ["literal", otras]]]
         : ["==", ["get", "contorno_secretaria"], "__ninguna__"],
     );
+
+    // El color del municipio es el de su cuadrilla. `match` necesita al menos
+    // una pareja, así que sin cuadrillas se queda en el gris de siempre.
     m.setPaintProperty(
       "municipios-velo",
-      "fill-opacity",
-      otras.length > 0
-        ? [
-            "case",
-            ["get", "se_valle"], VELO_SE[tema],
-            ["in", ["get", "secretaria_plan"], ["literal", otras]], VELO_OTRA[tema],
-            0,
-          ]
-        : ["case", ["get", "se_valle"], VELO_SE[tema], 0],
+      "fill-color",
+      pares.length > 0
+        ? ["match", ["get", "municipio"],
+           ...pares.flatMap(([mun, c]) => [mun, colorCuadrilla(c, oscuro)]),
+           GRAFITO[tema]]
+        : GRAFITO[tema],
     );
-  }, [claveSecretarias, tema, capasListas]);
+    // El orden de los casos es el orden de lo que importa: primero si tiene
+    // cuadrilla, que es el dato; después si es de la secretaría departamental o
+    // de una certificada que aporta sedes, que es el territorio de fondo.
+    const casos: unknown[] = ["case"];
+    if (conCuadrilla.length > 0) {
+      casos.push(["in", ["get", "municipio"], ["literal", conCuadrilla]],
+                 VELO_CUADRILLA[tema]);
+    }
+    casos.push(["get", "principal"], VELO_SE[tema]);
+    if (otras.length > 0) {
+      casos.push(["in", ["get", "secretaria_plan"], ["literal", otras]],
+                 VELO_OTRA[tema]);
+    }
+    casos.push(0);
+    m.setPaintProperty("municipios-velo", "fill-opacity",
+                       casos as never);
+  }, [claveSecretarias, claveMunicipios, contratoActivo, tema, oscuro,
+      capasListas]);
 
   // El modo: prende las capas de un lado y apaga las del otro. Al entrar a la
   // lista el mapa se aleja hasta que caben todas sus sedes; al volver al plan,
@@ -1133,10 +1265,16 @@ export default function MapaPlan({
 
     for (const s of delEscenario) {
       aseguraIcono(m, `dia-${s.cuadrilla}-${s.dia_corrido}`, oscuro, tema);
+      aseguraIcono(m, `dia-${s.cuadrilla}-${s.dia_corrido}-leve`, oscuro, tema);
       aseguraIcono(m, `meta-${s.cuadrilla}-${s.dia_corrido}`, oscuro, tema);
     }
 
     const desfases = desfasePines(delEscenario);
+    const esRisaralda = plan.escenarios.find((e) => e.escenario === escenario)
+      ?.contrato === "risaralda";
+    const leveDane = new Set(
+      (lista?.sedes ?? []).filter(danoLeve).map((s) => s.dane).filter(Boolean),
+    );
     const sedes = delEscenario.map((s) => {
       // Una escuela se prende cuando ya se visitó. Antes está ahí pero apagada:
       // borrarla diría que no existe, y prenderla diría que ya se hizo.
@@ -1146,13 +1284,17 @@ export default function MapaPlan({
       const meta = !hecha && suya(s.cuadrilla) && deLaSecretaria(s) &&
         objetivos.has(s.dane_propuesto);
       const [ox] = desfases.get(s.dane_propuesto) ?? [0, 0];
+      const leve = esRisaralda && (
+        leveDane.has(s.dane_propuesto)
+        || danoLeve({ estado_men_actual: s.estado_men_actual })
+      );
       return {
         type: "Feature" as const,
         geometry: { type: "Point" as const, coordinates: [s.lon_final, s.lat_final] },
         properties: {
           dane: s.dane_propuesto,
           icono: on
-            ? `dia-${s.cuadrilla}-${s.dia_corrido}`
+            ? `dia-${s.cuadrilla}-${s.dia_corrido}${leve ? "-leve" : ""}`
             : meta
               ? `meta-${s.cuadrilla}-${s.dia_corrido}`
               : "dia-apagado",
@@ -1179,7 +1321,11 @@ export default function MapaPlan({
     const porPoblado = new Map<string, { cuadrilla: string; on: boolean }>();
     for (const s of delEscenario) {
       if (reposo || !s.fuera_de_base) continue;
-      if (diaActual !== null && (s.semana - 1) * 5 + s.dia > diaActual) continue;
+      // `dia_corrido` y no `(semana - 1) * 5 + dia`: la semana pasó de cinco
+      // días a seis el 18-sep-2026 y esa cuenta quedó desfasada, así que desde
+      // el día 6 el mapa prendía camas de días que todavía no habían llegado.
+      // El script 84 ya escribe el día corrido; no hay que reconstruirlo.
+      if (diaActual !== null && s.dia_corrido > diaActual) continue;
       const on = suya(s.cuadrilla) && deLaSecretaria(s);
       const ya = porPoblado.get(s.duerme_en);
       if (!ya || (on && !ya.on)) {
@@ -1200,10 +1346,19 @@ export default function MapaPlan({
       type: "FeatureCollection", features: poblados as never,
     });
 
+    // LAS BASES SALEN DEL ESCENARIO, NO DE `tipo`. Antes se filtraba
+    // `lugares` por `tipo === "base"`, que funcionaba mientras hubo un solo
+    // contrato: sus dos bases eran Cali y Pereira y coincidían con las del
+    // plan. Con Risaralda adentro dejó de servir, porque un sitio puede ser
+    // base en un contrato y ciudad donde se duerme en el otro, y el mapa
+    // habría dibujado Cali estando en Risaralda. `bases` del resumen es el
+    // único sitio donde la pregunta tiene una respuesta única.
+    const resumenActivo = plan.escenarios.find((e) => e.escenario === escenario);
+    const deLaBase = new Set(Object.values(resumenActivo?.bases ?? {}));
     (m.getSource("bases") as maplibregl.GeoJSONSource)?.setData({
       type: "FeatureCollection",
       features: plan.lugares
-        .filter((l) => l.tipo === "base")
+        .filter((l) => deLaBase.has(l.nombre))
         .map((l) => ({
           type: "Feature" as const,
           geometry: { type: "Point" as const, coordinates: [l.lon, l.lat] },
@@ -1211,7 +1366,7 @@ export default function MapaPlan({
         })) as never,
     });
   }, [plan, tramos, escenario, diaActual, visitadas, objetivos, reposo, cuadrilla,
-      ocultas, seleccion, oscuro, tema, capasListas]);
+      ocultas, seleccion, oscuro, tema, capasListas, lista]);
 
   // Encuadra las sedes del escenario que se mira, también al filtrar
   // secretaría. Antes el cambio de alcance no movía la cámara y las de Buga o
@@ -1220,7 +1375,7 @@ export default function MapaPlan({
   useEffect(() => {
     const m = mapa.current;
     if (!m || !listo.current || !plan || simulando || modo === "lista") return;
-    encuadraCaja(m, cajaDeSedes(plan, escenario, ocultas));
+    encuadraCaja(m, cajaDelPlan(plan, escenario, ocultas));
   }, [escenario, claveFiltro, plan, capasListas, simulando, modo]);
 
   // Los móviles, aparte y en su propio efecto: se mueven sesenta veces por
@@ -1268,9 +1423,10 @@ export default function MapaPlan({
   }, [moviles, cuadrilla, zoomTic, capasListas]);
 
   // El encuadre de la simulación. Cabe todo lo que se va a recorrer en el
-  // escenario: los trazados, las escuelas y las dos bases. Lo que tapan las
-  // tarjetas y el panel de abajo se descuenta con el margen. Al apagarla se
-  // vuelve a la vista de entrada.
+  // escenario: los trazados, las escuelas y las bases DE ESE escenario. Las de
+  // los demás no: encuadrar Risaralda incluyendo Cali dejaba el recorrido en
+  // una esquina. Lo que tapan las tarjetas y el panel de abajo se descuenta con
+  // el margen. Al apagarla se vuelve a la vista de entrada.
   const encuadrado = useRef(false);
   useEffect(() => {
     const m = mapa.current;
@@ -1287,8 +1443,10 @@ export default function MapaPlan({
       if (r.properties.escenario !== escenario) continue;
       for (const c of r.geometry.coordinates) caja.extend(c);
     }
+    const bases = new Set(Object.values(
+      plan.escenarios.find((e) => e.escenario === escenario)?.bases ?? {}));
     for (const l of plan.lugares) {
-      if (l.tipo === "base") caja.extend([l.lon, l.lat]);
+      if (bases.has(l.nombre)) caja.extend([l.lon, l.lat]);
     }
     if (caja.isEmpty()) return;
     const ancho = window.innerWidth >= 768;

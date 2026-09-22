@@ -120,6 +120,17 @@ export function colorDe(s: SedeLista, c: ColorLista, oscuro: boolean): string {
   return oscuro ? t.oscuro : t.claro;
 }
 
+/** Sin daño o leve, según lo que contestó el colegio en la encuesta del MEN
+ *  (`estado_men`): Sin afectación + Afectación menor. Son 34 de las 63 de
+ *  Risaralda. Candidatas a salir del análisis; en el plan solo se marcan. */
+export function danoLeve(s: {
+  estado_men?: string | null;
+  estado_men_actual?: string | null;
+}): boolean {
+  const e = s.estado_men ?? s.estado_men_actual ?? "";
+  return e === "Sin afectación" || e === "Afectación menor";
+}
+
 /** El borde dice qué tan confiable es el punto. Sin borde: confiable. */
 export const BORDE: Record<Calidad, { rotulo: string; tono: Tono | null; ancho: number }> = {
   "verificada": { rotulo: "Revisada a mano", tono: null, ancho: 0 },

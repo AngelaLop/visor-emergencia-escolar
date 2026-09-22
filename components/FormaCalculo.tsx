@@ -55,9 +55,16 @@ export default function FormaCalculo({
     grupos.set(g, (grupos.get(g) ?? 0) + 1);
   }
   const dias = (plan.dias ?? []).filter((d) => d.escenario === escenario);
-  const cupos = plan.tdr.cuadrillas * plan.tdr.semanas_campo * 5;
-  const libres = cupos - dias.length;
   const resumen = plan.escenarios.find((e) => e.escenario === escenario);
+  // EL MARCO ES EL DEL CONTRATO DEL ESCENARIO, no el TdR siempre. El TdR es un
+  // documento del contrato del Valle; Risaralda se contrata aparte y no tiene
+  // uno, así que sus 45 cupos salen de un supuesto (3 cuadrillas por 15 días) y
+  // la pantalla lo dice con esas palabras. Llamarle TdR a los dos le atribuiría
+  // a Risaralda una cláusula que nadie firmó.
+  const contrato = plan.contratos?.find((c) => c.clave === resumen?.contrato);
+  const cupos = contrato?.marco.cupos
+    ?? plan.tdr.cuadrillas * plan.tdr.semanas_campo * plan.tdr.visitas_por_semana;
+  const libres = cupos - dias.length;
   const dosVisitas = dias.filter((d) => d.visitas.length === 2).length;
   const unaVisita = dias.length - dosVisitas;
   const total = dias.reduce((a, d) => a + d.min_carretera, 0);
@@ -200,15 +207,15 @@ export default function FormaCalculo({
 
         <Seccion titulo="5. Cuadrillas y calendario">
           <p>
-            El TdR fija {plan.tdr.cuadrillas} cuadrillas por{" "}
-            {plan.tdr.semanas_campo} semanas: {cupos} días-cuadrilla. Este
-            alcance usa {resumen?.cuadrillas ?? "—"} cuadrillas y{" "}
-            {resumen?.dias_campo ?? "—"} días ({dias.length}{" "}
-            días de campo)
+            {contrato?.marco.texto
+              ?? `El TdR fija ${plan.tdr.cuadrillas} cuadrillas por ${plan.tdr.semanas_campo} semanas: ${cupos} días-cuadrilla.`}{" "}
+            Este alcance usa {resumen?.cuadrillas ?? "—"} cuadrillas y{" "}
+            {resumen?.dias_campo ?? "—"} días de calendario ({dias.length}{" "}
+            días-cuadrilla)
             {resumen
               ? resumen.en_tdr
-                ? ", y cabe en el TdR"
-                : ", y no cabe en el TdR"
+                ? `, y cabe en ${contrato?.marco.origen === "supuesto" ? "ese supuesto" : "el TdR"}`
+                : `, y no cabe en ${contrato?.marco.origen === "supuesto" ? "ese supuesto" : "el TdR"}`
               : ""}
             . Cada día tiene una o dos visitas: con inspecciones de 3 horas y
             una jornada de 8, dos visitas dejan 2 horas para manejar y una sola

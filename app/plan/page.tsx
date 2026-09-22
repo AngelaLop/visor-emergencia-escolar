@@ -38,7 +38,7 @@ import { Info, Tarjeta } from "@/components/Piezas";
 import FichaPlan from "@/components/FichaPlan";
 import FormaCalculo from "@/components/FormaCalculo";
 import TarjetaLista from "@/components/TarjetaLista";
-import { cargaLista } from "@/lib/lista";
+import { cargaLista, danoLeve } from "@/lib/lista";
 import type { ColorLista, ListaMen, Resalte } from "@/lib/lista";
 import type { Movil } from "@/components/MapaPlan";
 import {
@@ -51,16 +51,21 @@ import {
   coma,
   cuadrillas,
   diasDeCampo,
+  contratoDe,
+  contratoPorDefecto,
   escenarioPorDefecto,
+  escenariosDe,
   estadoEn,
   hm,
   jornada,
+  nombreMarco,
   largoDelDia,
   SE_VALLE,
   secretarias,
 } from "@/lib/plan";
 import type {
   ColeccionTramos,
+  Contrato,
   Escenario,
   GuionDia,
   JornadaCuadrilla,
@@ -154,17 +159,24 @@ function NOTA_NOCHES(
 }
 
 /** Qué es este alcance, escrito con las cifras del escenario que se mira. */
-function notaAlcance(resumen: ResumenEscenario | undefined): string {
+function notaAlcance(
+  resumen: ResumenEscenario | undefined,
+  contrato: Contrato | undefined,
+): string {
   const base =
-    "Esto no es una orden de trabajo ni dice quién tiene que ir a dónde. Es una demostración de cómo se pueden acomodar las rutas y de cuánto demora cada día, para poder evaluar lo que cuesta.\n\nEl TdR fija 3 cuadrillas y 3 semanas de campo: 45 días-cuadrilla.";
+    "Esto no es una orden de trabajo ni dice quién tiene que ir a dónde. Es una " +
+    "demostración de cómo se pueden acomodar las rutas y de cuánto demora cada " +
+    "día, para poder evaluar lo que cuesta.\n\n" +
+    (contrato?.marco.texto
+      ?? "El TdR fija 3 cuadrillas y 3 semanas de campo: 45 días-cuadrilla.");
   if (!resumen) return base;
   const diasTotal = resumen.cuadrillas_jornada?.reduce((a, c) => a + c.dias, 0);
   const forma =
     `Este alcance son ${resumen.sedes} sedes, ${resumen.cuadrillas} cuadrillas y ` +
     `${resumen.dias_campo} días. `;
   const cabe = resumen.en_tdr
-    ? "Cabe en el TdR."
-    : "No cabe en el TdR.";
+    ? `Cabe en ${nombreMarco(contrato)}.`
+    : `No cabe en ${nombreMarco(contrato)}.`;
   const asterisco = resumen.rotulo.includes("*")
     ? " El asterisco es sin Buenaventura."
     : "";
@@ -240,8 +252,13 @@ export default function PaginaPlan() {
   const [tramos, setTramos] = useState<ColeccionTramos | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // El alcance del plan: cuál de los escenarios se está mirando. Arranca vacío
-  // y lo fija el archivo al cargar, porque las claves las decide el script 84.
+  // EL CONTRATO Y EL ALCANCE, en ese orden. El contrato es qué pedido del MEN
+  // se está mirando (el Valle o Risaralda): son dos contrataciones distintas,
+  // con cuadrillas y bases propias, y sus escenarios no se comparan entre sí.
+  // El alcance es cuál de los escenarios de ESE contrato. Los dos arrancan
+  // vacíos y los fija el archivo al cargar, porque las claves las decide el
+  // script 84.
+  const [contrato, setContrato] = useState<string>("");
   const [escenario, setEscenario] = useState<Escenario>("");
   // La inspección quedó fija en 3 horas desde la reunión del 16 de septiembre
   // de 2026. Sigue como constante para no reescribir lo que depende de ella.
@@ -291,7 +308,9 @@ export default function PaginaPlan() {
     cargaPlan()
       .then((p) => {
         setPlan(p);
-        setEscenario(escenarioPorDefecto(p));
+        const c = contratoPorDefecto(p);
+        setContrato(c);
+        setEscenario(escenarioPorDefecto(p, c));
       })
       .catch((e) => setError(String(e)));
     cargaTramos().then(setTramos).catch((e) => setError(String(e)));
@@ -303,6 +322,10 @@ export default function PaginaPlan() {
     [plan, tramos, escenario],
   );
   const resumen = plan?.escenarios.find((e) => e.escenario === escenario);
+  // El contrato del escenario que se está mirando, no el del selector: si los
+  // dos se desincronizaran por un instante, los textos deben describir el plan
+  // que está en pantalla y no el botón que está prendido.
+  const contratoActual = plan ? contratoDe(plan, escenario) : undefined;
   // Las secretarías certificadas, aparte de la del Valle, que ponen sedes en
   // este escenario. El mapa las usa para no dibujar el límite de una
   // secretaría que en este alcance no aporta nada.
@@ -495,6 +518,7 @@ export default function PaginaPlan() {
           <Encabezado
             plan={plan}
             resumen={resumen}
+            contratoActual={contratoActual}
             escenario={escenario}
             ocultas={ocultas}
             onOcultas={(x) => {
@@ -542,6 +566,7 @@ export default function PaginaPlan() {
               guion={guion}
               escenario={escenario}
               resumen={plan.escenarios.find((e) => e.escenario === escenario)}
+              contratoActual={contratoActual}
               cuadrillasPlan={cuadrillas(plan, escenario)}
               cuadrilla={cuadrilla}
               onCuadrilla={setCuadrilla}
@@ -561,6 +586,7 @@ export default function PaginaPlan() {
               guion={guion}
               inspeccion={inspeccion}
               resumen={resumen}
+              contratoActual={contratoActual}
             />
           )}
           {plan && !reposo && (
@@ -587,6 +613,7 @@ export default function PaginaPlan() {
               resumen={resumen}
               otrasSecretarias={otrasSecretarias}
               diasCampo={diasCampo}
+              lista={lista}
               onFormaCalculo={() => setFormaCalculo(true)}
             />
           )}
@@ -597,7 +624,19 @@ export default function PaginaPlan() {
           de la lista no hay escenarios que escoger. */}
       {plan && modo === "plan" && (
         <ChipsEscenario
-          escenarios={plan.escenarios}
+          contratos={plan.contratos}
+          contrato={contrato}
+          onContrato={(c) => {
+            setContrato(c);
+            // Cambiar de contrato cambia de escenario: las claves de uno no
+            // existen en el otro, y dejar la vieja dejaría el mapa en blanco.
+            setEscenario(escenarioPorDefecto(plan, c));
+            setSeleccion(null);
+            setCuadrilla(null);
+            setOcultas([]);
+            reinicia();
+          }}
+          escenarios={escenariosDe(plan, contrato)}
           escenario={escenario}
           onEscenario={(e) => {
             setEscenario(e);
@@ -686,6 +725,7 @@ export default function PaginaPlan() {
 function Encabezado({
   plan,
   resumen,
+  contratoActual,
   escenario,
   ocultas,
   onOcultas,
@@ -699,6 +739,9 @@ function Encabezado({
 }: {
   plan: Plan | null;
   resumen: ResumenEscenario | undefined;
+  /** El contrato del escenario: decide si los textos dicen «el TdR» o «el
+   *  supuesto de planeación». Risaralda no tiene TdR. */
+  contratoActual: Contrato | undefined;
   escenario: Escenario;
   ocultas: string[];
   onOcultas: (s: string[]) => void;
@@ -741,7 +784,7 @@ function Encabezado({
               ? `${resumen?.sedes ?? 0} sedes · ${resumen?.cuadrillas ?? 0} cuadrillas · ${resumen?.dias_campo ?? 0} días`
               : "cargando…"}
             <Info
-              texto={notaAlcance(resumen)}
+              texto={notaAlcance(resumen, contratoActual)}
               ancho
             />
           </p>
@@ -802,17 +845,29 @@ function Encabezado({
  * el borde intermitente dice que esa cifra está fuera de lo contratado.
  */
 function ChipsEscenario({
+  contratos,
+  contrato,
+  onContrato,
   escenarios,
   escenario,
   onEscenario,
 }: {
+  contratos: Contrato[];
+  contrato: string;
+  onContrato: (c: string) => void;
   escenarios: ResumenEscenario[];
   escenario: Escenario;
   onEscenario: (e: Escenario) => void;
 }) {
-  if (escenarios.length < 2) return null;
-  // La línea base para el delta: el escenario más pequeño.
-  const base = escenarios.reduce((a, b) => (b.sedes < a.sedes ? b : a));
+  // Con un solo contrato y un solo alcance no hay nada que escoger. Con un
+  // contrato de un solo alcance (Risaralda) sigue habiendo: el contrato.
+  if (contratos.length < 2 && escenarios.length < 2) return null;
+  // La línea base para el delta: el escenario más pequeño DEL CONTRATO. Cruzar
+  // contratos aquí compararía las 60 sedes de Risaralda contra las 43 del BID,
+  // que son trabajos distintos y no un alcance mayor del mismo.
+  const base = escenarios.length > 0
+    ? escenarios.reduce((a, b) => (b.sedes < a.sedes ? b : a))
+    : null;
   return (
     <div
       // Entre la columna de tarjetas (368 px) y el botón del visor nacional.
@@ -820,6 +875,41 @@ function ChipsEscenario({
       className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-start overflow-x-auto py-0.5 pl-2 pr-[5.75rem] md:left-[380px] md:right-[150px] md:justify-center md:px-0 md:pr-0"
     >
       <div className="flex flex-col items-start gap-1 md:items-center">
+      {/* EL CONTRATO, ENCIMA DEL ALCANCE. Son dos preguntas anidadas y en ese
+          orden: primero qué se está contratando, después hasta dónde llega.
+          Puestos en una sola fila, los cinco botones se leían como cinco
+          alcances del mismo trabajo, y tres de ellos son del Valle y dos de
+          Risaralda. El contrato va con texto solo y sin cifras: las horas de
+          dos contratos distintos no se suman ni se comparan. */}
+      {contratos.length > 1 && (
+        <div
+          className="pointer-events-auto flex shrink-0 gap-0 rounded-full border p-0.5 shadow-md"
+          style={{ background: "var(--superficie)", borderColor: "var(--borde)" }}
+          role="group"
+          aria-label="Contrato"
+        >
+          {contratos.map((c) => {
+            const activo = c.clave === contrato;
+            return (
+              <button
+                key={c.clave}
+                onClick={() => onContrato(c.clave)}
+                aria-pressed={activo}
+                title={c.glosa}
+                className="shrink-0 rounded-full px-3 py-0.5 text-[12px] leading-tight"
+                style={{
+                  background: activo ? "var(--acento)" : "transparent",
+                  color: activo ? "var(--superficie)" : "var(--tinta)",
+                  fontWeight: activo ? 600 : 400,
+                }}
+              >
+                {c.rotulo}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {escenarios.length > 1 && (
       <div
         className="pointer-events-auto flex shrink-0 gap-0 rounded-full border p-0.5 shadow-md"
         style={{ background: "var(--superficie)", borderColor: "var(--borde)" }}
@@ -828,7 +918,7 @@ function ChipsEscenario({
       >
         {escenarios.map((e) => {
           const activo = e.escenario === escenario;
-          const mas = e.horas_carretera - base.horas_carretera;
+          const mas = e.horas_carretera - (base?.horas_carretera ?? 0);
           return (
             <button
               key={e.escenario}
@@ -860,6 +950,7 @@ function ChipsEscenario({
           );
         })}
       </div>
+      )}
       {escenarios.some((e) => e.rotulo.includes("*")) && (
         <p
           className="pointer-events-none max-w-[calc(100vw-8rem)] text-[10px] leading-snug md:max-w-none"
@@ -1050,6 +1141,7 @@ function TarjetaResumen({
   guion,
   escenario,
   resumen,
+  contratoActual,
   cuadrillasPlan,
   cuadrilla,
   onCuadrilla,
@@ -1058,6 +1150,7 @@ function TarjetaResumen({
   escenario: Escenario;
   /** El resumen del escenario, que trae la cota del solucionador. */
   resumen: ResumenEscenario | undefined;
+  contratoActual: Contrato | undefined;
   cuadrillasPlan: string[];
   cuadrilla: string | null;
   onCuadrilla: (c: string | null) => void;
@@ -1143,8 +1236,32 @@ function TarjetaResumen({
             <Info
               texto={
                 `${coma(resumen.horas_campo)} h en campo: ${coma(resumen.horas_carretera)} h de carretera y ${coma(resumen.horas_inspeccion)} h de inspección.\n\n` +
-                `La inspección son ${(resumen.inspeccion_min / 60).toLocaleString("es-CO")} horas por sede, un supuesto nuestro. El TdR lo trae adentro de las 5 visitas por semana y no lo separa del desplazamiento. Un promedio construido sobre ese supuesto hereda la misma incertidumbre.\n\n` +
+                `La inspección son ${(resumen.inspeccion_min / 60).toLocaleString("es-CO")} horas por sede, un supuesto nuestro. ${contratoActual?.marco.origen === "supuesto" ? "No hay documento que lo fije" : "El TdR lo trae adentro de las 5 visitas por semana y no lo separa del desplazamiento"}. Un promedio construido sobre ese supuesto hereda la misma incertidumbre.\n\n` +
                 `Jornada diaria, carretera más inspección: media ${hm(resumen.min_jornada_media)}, mediana ${hm(resumen.min_jornada_mediana)}, el día más largo ${hm(resumen.min_jornada_peor)}.`
+              }
+              ancho
+            />
+          </p>
+        )}
+        {/* QUIÉN PONE LAS CUADRILLAS, cuando eso cambia el número. Solo lo trae
+            Risaralda. El plan no cambia (se trabaja donde están las sedes), así
+            que no es otro escenario: es la misma cifra con el traslado sumado,
+            y por eso va como una línea más y no como un botón aparte. */}
+        {resumen?.traslado_armenia && (
+          <p className="num mt-0.5 text-[11px]" style={{ color: "var(--tinta-2)" }}>
+            <span className="font-semibold" style={{ color: "var(--tinta)" }}>
+              +{coma(resumen.traslado_armenia.horas)} h
+            </span>{" "}
+            si las cuadrillas vienen de {resumen.traslado_armenia.desde}
+            <Info
+              texto={
+                `El plan no cambia: se trabaja donde están las sedes. Lo que se suma es el viaje de ${resumen.traslado_armenia.desde} a ${resumen.traslado_armenia.hasta} la víspera y el de vuelta al terminar, una vez por cuadrilla.
+
+` +
+                `${hm(resumen.traslado_armenia.min_ida)} de ida y ${hm(resumen.traslado_armenia.min_vuelta)} de vuelta, por las ${resumen.traslado_armenia.cuadrillas} cuadrillas: ${coma(resumen.traslado_armenia.horas)} h. El total pasa de ${coma(resumen.horas_carretera)} h a ${coma(resumen.horas_carretera + resumen.traslado_armenia.horas)} h.
+
+` +
+                `Ese viaje no gasta día hábil: se hace la noche anterior. Los minutos salen del mismo caché de Mapbox con el que se calculó el plan, no del solucionador, así que esta cifra no arrastra su brecha.`
               }
               ancho
             />
@@ -1237,10 +1354,12 @@ function TarjetaSupuestos({
   guion,
   inspeccion,
   resumen,
+  contratoActual,
 }: {
   guion: GuionDia[];
   inspeccion: number;
   resumen: ResumenEscenario | undefined;
+  contratoActual: Contrato | undefined;
 }) {
   const pasan = (ins: number) =>
     guion.filter((g) => jornada(g, ins) > JORNADA_MIN + 0.5).length;
@@ -1270,7 +1389,7 @@ function TarjetaSupuestos({
           </span>
           ; con media hora más, {pasan(inspeccion + 30)}.
           <Info
-            texto={`El plan se armó con la inspección en ${(inspeccion / 60).toLocaleString("es-CO")} horas y la jornada tope en ${JORNADA_MIN / 60}. Eso deja el día más largo en ${hm(peor)}, a ${Math.round(JORNADA_MIN - peor)} minutos del techo.\n\nNo es un detalle fino: ${dobles} de los ${guion.length} días llevan dos visitas, así que cada minuto que se alargue la inspección cuenta doble en esos días. Cuánto dura una inspección no lo sabemos y el TdR lo esquiva al fijar 5 visitas por cuadrilla por semana sin separarla del desplazamiento.`}
+            texto={`El plan se armó con la inspección en ${(inspeccion / 60).toLocaleString("es-CO")} horas y la jornada tope en ${JORNADA_MIN / 60}. Eso deja el día más largo en ${hm(peor)}, a ${Math.round(JORNADA_MIN - peor)} minutos del techo.\n\nNo es un detalle fino: ${dobles} de los ${guion.length} días llevan dos visitas, así que cada minuto que se alargue la inspección cuenta doble en esos días. Cuánto dura una inspección no lo sabemos y ${contratoActual?.marco.origen === "supuesto" ? "no hay documento que lo fije" : "el TdR lo esquiva al fijar 5 visitas por cuadrilla por semana sin separarla del desplazamiento"}.`}
             ancho
           />
         </p>
@@ -1321,7 +1440,7 @@ function TarjetaSupuestos({
           </li>
           <li>
             {resumen
-              ? `${resumen.cuadrillas} cuadrillas durante ${resumen.dias_campo} días, de lunes a sábado. ${basesEnTexto(resumen.bases)}. ${resumen.en_tdr ? "Cabe en el TdR." : "No cabe en el TdR."}`
+              ? `${resumen.cuadrillas} cuadrillas durante ${resumen.dias_campo} días, de lunes a sábado. ${basesEnTexto(resumen.bases)}. ${resumen.en_tdr ? `Cabe en ${nombreMarco(contratoActual)}.` : `No cabe en ${nombreMarco(contratoActual)}.`}`
               : ""}
           </li>
           <li>
@@ -1410,14 +1529,21 @@ function TarjetaLeyenda({
   resumen,
   otrasSecretarias,
   diasCampo,
+  lista,
   onFormaCalculo,
 }: {
   plan: Plan;
   resumen: ResumenEscenario | undefined;
   otrasSecretarias: string[];
   diasCampo: number;
+  lista: ListaMen | null;
   onFormaCalculo: () => void;
 }) {
+  const esRisaralda = resumen?.contrato === "risaralda";
+  const nLeve = esRisaralda && lista
+    ? lista.sedes.filter((s) => danoLeve(s) && s.lat !== null
+      && ["Risaralda", "Pereira", "Dosquebradas"].includes(s.secretaria)).length
+    : 0;
   return (
     <Tarjeta>
       <div className="px-3 py-2">
@@ -1434,20 +1560,47 @@ function TarjetaLeyenda({
             del 1 al {diasCampo}, y su color es la cuadrilla. Dos pines con
             el mismo número y el mismo color son las dos visitas de un día.
           </li>
+          {esRisaralda && (
+            <li className="flex items-start gap-1.5">
+              <span
+                className="mt-0.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ border: "1.6px dashed #2f8a55" }}
+                aria-hidden
+              />
+              <span>
+                Anillo verde punteado: el colegio declaró sin afectación o
+                afectación menor en la encuesta del MEN
+                {nLeve > 0 ? ` (${nLeve} en el mapa)` : ""}. Candidatas a
+                salir del análisis; el plan no las quita.
+              </span>
+            </li>
+          )}
           {/* Sin nombrar el color: el rombo se dibuja con la tinta del tema y
               en oscuro sale claro, así que «negros» era falso la mitad del
               tiempo. Lo que lo identifica es la forma. */}
-          <li>
-            Los rombos llenos son las bases de salida:{" "}
-            {resumen
-              ? [...new Set(Object.values(resumen.bases))].join(" y ")
-              : "—"}
-            .
+          <li className="flex items-start gap-1.5">
+            <span
+              className="mt-[3px] inline-block h-2 w-2 shrink-0"
+              style={{
+                background: "var(--tinta)",
+                transform: "rotate(45deg)",
+              }}
+              aria-hidden
+            />
+            <span>
+              Los rombos llenos son las bases de salida:{" "}
+              {resumen
+                ? [...new Set(Object.values(resumen.bases))].join(" y ")
+                : "—"}
+              .
+            </span>
           </li>
+          {!esRisaralda && (
           <li>
             El área sombreada con contorno continuo es el territorio de la
             Secretaría de Educación del Valle: 34 municipios.
           </li>
+          )}
           {/* Solo cuando el escenario trae otras secretarías. En el alcance de
               solo la SE del Valle no hay contorno punteado que explicar. */}
           {otrasSecretarias.length > 0 && (
