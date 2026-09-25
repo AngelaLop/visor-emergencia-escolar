@@ -336,12 +336,13 @@ export type Movil = {
  * es peor que ninguno.
  */
 function creaDia(
-  color: string, dia: number, borde: string, tinta: string, leve = false,
+  color: string, dia: number, borde: string, tinta: string,
+  anillo: "verde" | "blanco" | null = null, rojo = false,
 ): ImageData {
   const R = 2;
   // Con anillo el lienzo tiene que ser más grande: si no, MapLibre recorta
   // el trazo y parece que no hay marca.
-  const s = leve ? 36 : 26;
+  const s = anillo || rojo ? 36 : 26;
   const cx = s / 2;
   const c = document.createElement("canvas");
   c.width = s * R;
@@ -349,14 +350,34 @@ function creaDia(
   const x = c.getContext("2d")!;
   x.scale(R, R);
 
-  if (leve) {
+  // El anillo punteado de afuera dice qué se sabe del daño: verde si el MEN la
+  // tiene sin afectación o con afectación menor, blanco si no se sabe. El blanco lleva un trazo
+  // oscuro debajo porque sobre el mapa claro un anillo blanco solo no se ve.
+  if (anillo) {
     x.setLineDash([3, 2.2]);
+    if (anillo === "blanco") {
+      x.beginPath();
+      x.arc(cx, cx, 16, 0, Math.PI * 2);
+      x.strokeStyle = "rgba(20, 20, 20, 0.75)";
+      x.lineWidth = 4;
+      x.stroke();
+    }
     x.beginPath();
     x.arc(cx, cx, 16, 0, Math.PI * 2);
-    x.strokeStyle = "#2f8a55";
+    x.strokeStyle = anillo === "verde" ? "#2f8a55" : "#ffffff";
     x.lineWidth = 2.6;
     x.stroke();
     x.setLineDash([]);
+  }
+  // El círculo rojo continuo, entre el pin y el anillo: la coordenada todavía
+  // no está confirmada y se le pidió a la Secretaría. Continuo y no punteado
+  // para que no se confunda con el anillo del daño cuando van los dos.
+  if (rojo) {
+    x.beginPath();
+    x.arc(cx, cx, 12.6, 0, Math.PI * 2);
+    x.strokeStyle = "#d62828";
+    x.lineWidth = 2.4;
+    x.stroke();
   }
 
   x.beginPath();
@@ -526,10 +547,12 @@ function aseguraIcono(
     m.addImage(id, creaMeta(colorCuadrilla(meta[1], oscuro), Number(meta[2]), borde));
     return;
   }
-  const dia = /^dia-([A-Z])-(\d+)(-leve)?$/.exec(id);
+  const dia = /^dia-([A-Z])-(\d+)(-leve|-blanco)?(-rojo)?$/.exec(id);
   if (dia) {
     m.addImage(id, creaDia(
-      colorCuadrilla(dia[1], oscuro), Number(dia[2]), borde, tinta, Boolean(dia[3]),
+      colorCuadrilla(dia[1], oscuro), Number(dia[2]), borde, tinta,
+      dia[3] === "-leve" ? "verde" : dia[3] === "-blanco" ? "blanco" : null,
+      Boolean(dia[4]),
     ));
     return;
   }
@@ -1284,17 +1307,25 @@ export default function MapaPlan({
       const meta = !hecha && suya(s.cuadrilla) && deLaSecretaria(s) &&
         objetivos.has(s.dane_propuesto);
       const [ox] = desfases.get(s.dane_propuesto) ?? [0, 0];
-      const leve = esRisaralda && (
+      const leve = (esRisaralda && (
         leveDane.has(s.dane_propuesto)
         || danoLeve({ estado_men_actual: s.estado_men_actual })
-      );
+      )) || s.anillo === "verde";
+      // Las marcas de Palmira vienen hechas del script 84. El sufijo arma el
+      // nombre del ícono, y el ícono se crea acá porque la combinación de
+      // anillo y círculo rojo no está entre los que se crean de antemano.
+      const sufijo = (leve ? "-leve" : s.anillo === "sin_dato" ? "-blanco" : "")
+        + (s.confirmar_coordenada ? "-rojo" : "");
+      if (sufijo) {
+        aseguraIcono(m, `dia-${s.cuadrilla}-${s.dia_corrido}${sufijo}`, oscuro, tema);
+      }
       return {
         type: "Feature" as const,
         geometry: { type: "Point" as const, coordinates: [s.lon_final, s.lat_final] },
         properties: {
           dane: s.dane_propuesto,
           icono: on
-            ? `dia-${s.cuadrilla}-${s.dia_corrido}${leve ? "-leve" : ""}`
+            ? `dia-${s.cuadrilla}-${s.dia_corrido}${sufijo}`
             : meta
               ? `meta-${s.cuadrilla}-${s.dia_corrido}`
               : "dia-apagado",

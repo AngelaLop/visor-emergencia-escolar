@@ -1540,6 +1540,12 @@ function TarjetaLeyenda({
   onFormaCalculo: () => void;
 }) {
   const esRisaralda = resumen?.contrato === "risaralda";
+  // Las marcas de Palmira (script 84) se cuentan sobre las sedes del escenario
+  // que se está viendo: en los que no llevan la lista nueva no aparece nada.
+  const delEscenario = plan.sedes.filter((s) => s.escenario === resumen?.escenario);
+  const nVerdePal = delEscenario.filter((s) => s.anillo === "verde").length;
+  const nSinDato = delEscenario.filter((s) => s.anillo === "sin_dato").length;
+  const nConfirmar = delEscenario.filter((s) => s.confirmar_coordenada).length;
   const nLeve = esRisaralda && lista
     ? lista.sedes.filter((s) => danoLeve(s) && s.lat !== null
       && ["Risaralda", "Pereira", "Dosquebradas"].includes(s.secretaria)).length
@@ -1572,6 +1578,48 @@ function TarjetaLeyenda({
                 afectación menor en la encuesta del MEN
                 {nLeve > 0 ? ` (${nLeve} en el mapa)` : ""}. Candidatas a
                 salir del análisis; el plan no las quita.
+              </span>
+            </li>
+          )}
+          {nVerdePal > 0 && (
+            <li className="flex items-start gap-1.5">
+              <span
+                className="mt-0.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ border: "1.6px dashed #2f8a55" }}
+                aria-hidden
+              />
+              <span>
+                Anillo verde punteado en Palmira: el tablero del MEN la tiene
+                sin afectación o con afectación menor ({nVerdePal} en el mapa).
+              </span>
+            </li>
+          )}
+          {nSinDato > 0 && (
+            <li className="flex items-start gap-1.5">
+              <span
+                className="mt-0.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{
+                  border: "1.6px dashed #ffffff",
+                  boxShadow: "0 0 0 1px rgba(20, 20, 20, 0.75)",
+                }}
+                aria-hidden
+              />
+              <span>
+                Anillo blanco punteado: no sabemos si tuvo daño, porque no está
+                en el tablero del MEN ({nSinDato} en el mapa).
+              </span>
+            </li>
+          )}
+          {nConfirmar > 0 && (
+            <li className="flex items-start gap-1.5">
+              <span
+                className="mt-0.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ border: "1.8px solid #d62828" }}
+                aria-hidden
+              />
+              <span>
+                Círculo rojo: la ubicación no está confirmada y se le pidió a
+                la Secretaría de Palmira ({nConfirmar} en el mapa).
               </span>
             </li>
           )}

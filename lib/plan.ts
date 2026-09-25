@@ -120,6 +120,13 @@ export type SedePlan = {
   en_revision?: boolean;
   estado_men_actual?: string | null;
   nivel_men_actual?: string | null;
+  /** Marcas de la lista nueva de Palmira (script 84, `marcas_palmira`):
+   *  `verde` si el MEN la tiene sin afectación o
+   *  afectación menor (la regla de `danoLeve`), `sin_dato` si no se sabe si
+   *  tuvo daño, y `confirmar_coordenada` si es una de las 6 cuya ubicación se
+   *  le pidió a la Secretaría. */
+  anillo?: "verde" | "sin_dato" | null;
+  confirmar_coordenada?: boolean;
 };
 
 /** Un día de una cuadrilla, con sus visitas en orden. */
