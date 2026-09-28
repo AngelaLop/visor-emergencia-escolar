@@ -1069,11 +1069,16 @@ export default function MapaPlan({
   }, []);
 
   // El cambio de tema recarga el estilo base, y con él se van todas las capas.
+  //
+  // Se repinta en `style.load` y no en `styledata`. `styledata` salta antes de
+  // que el estilo nuevo termine de llegar: las capas se pintaban y enseguida
+  // el estilo oscuro las reemplazaba, así que en oscuro el mapa quedaba sin
+  // escuelas ni cuadrillas, en el Valle y en Risaralda (visto el 28-sep-2026).
   useEffect(() => {
     const m = mapa.current;
     if (!m || !listo.current) return;
     m.setStyle(ESTILO[tema]);
-    m.once("styledata", () => {
+    m.once("style.load", () => {
       pinta.current(m);
       setCapasListas((x) => x + 1);
     });
