@@ -1212,7 +1212,9 @@ function TarjetaResumen({
           {resumen && (
             <Info
               texto={
-                (resumen.optimo_probado
+                (resumen.optimo_probado && resumen.territorio_fijo
+                  ? `Óptimo demostrado para este reparto de municipios entre cuadrillas: con él ningún plan gasta menos de ${coma(resumen.horas_carretera)} h. El reparto se escogió probando cambios de municipios entre cuadrillas vecinas; otro reparto podría gastar menos, y eso no está demostrado.`
+                  : resumen.optimo_probado
                   ? `Óptimo demostrado: con estas reglas no existe un plan que gaste menos de ${coma(resumen.horas_carretera)} h. No es el mejor que se encontró, es el mejor que hay.`
                   : `El solucionador no alcanzó a probar que este sea el mejor plan posible. Lo que sí demostró es que ninguno baja de ${coma(resumen.cota_horas)} h, así que lo que queda por ganar está entre 0 y ${coma(resumen.horas_carretera - resumen.cota_horas)} h.`) +
                 (resumen.horas_regreso > 0.05

@@ -254,6 +254,9 @@ export type ResumenEscenario = {
    *  óptimo. Si hay un plan mejor, no baja de aquí. */
   cota_horas: number;
   optimo_probado: boolean;
+  /** El reparto de municipios entre cuadrillas se fijó antes de resolver.
+   *  Con él, `optimo_probado` vale solo para ese reparto. */
+  territorio_fijo?: boolean;
   noches_fuera: number;
   km: number;
   /** Las noches que hay que pagar: las de días de campo que terminan fuera de

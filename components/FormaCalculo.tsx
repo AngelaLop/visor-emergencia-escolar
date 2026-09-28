@@ -243,7 +243,9 @@ export default function FormaCalculo({
                 ? ` (se pasa en ${-libres === 1 ? "un día-cuadrilla" : `${-libres} días-cuadrilla`} del cupo del TdR)`
                 : ""}
             , {coma(total / 60)} h de carretera en total
-            {resumen?.optimo_probado
+            {resumen?.optimo_probado && resumen.territorio_fijo
+              ? ", el mínimo posible con estas reglas y este reparto de municipios"
+              : resumen?.optimo_probado
               ? ", el mínimo posible con estas reglas"
               : resumen
                 ? `; ningún plan con estas reglas baja de ${coma(resumen.cota_horas)} h`
