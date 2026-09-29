@@ -107,7 +107,6 @@ export type SedePlan = {
   concepto_orden: number | null;
   dictamen: string | null;
   declaracion_rector: string | null;
-  observacion_rector: string | null;
   fichas: FichaAis[] | null;
   fotos_reporte: FotoReporte[] | null;
 

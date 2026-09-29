@@ -481,7 +481,6 @@ export type Dano = {
    *  lo declararon seis sedes que dijeron que no hay afectación, y eso es una
    *  respuesta. */
   pct_afectacion?: number | null;
-  acciones_etc?: string;
   /** Cuántas filas del diagnóstico hablan de esta sede. Mayor que 1 cuando el
    *  rector describió bloques por separado. */
   filas_diagnostico?: number;

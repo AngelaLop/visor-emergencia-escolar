@@ -423,12 +423,6 @@ function Declaracion({ dano: d }: { dano: Dano }) {
           respuesta. */}
       <Operativas d={d} />
 
-      {d.acciones_etc && (
-        <p className="mt-1 text-[11px]" style={{ color: "var(--tinta-2)" }}>
-          Acciones de la secretaría: {d.acciones_etc.toLowerCase()}
-        </p>
-      )}
-
       {/* La foto del reporte, que hasta hoy se quedaba en el Excel.
           Son 509 de las 570 sedes del Valle, subidas al formulario por quien
           diligenció el diagnóstico. Es lo único de toda la fuente que muestra la

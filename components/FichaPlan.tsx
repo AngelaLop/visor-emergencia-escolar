@@ -166,11 +166,6 @@ export default function FichaPlan({
           {sede.declaracion_rector && (
             <Dato k="Reporte rector a la Secretaría del Valle" v={sede.declaracion_rector.toLowerCase()} />
           )}
-          {sede.observacion_rector && (
-            <p className="mt-1 text-[11px] leading-snug" style={{ color: "var(--tinta-2)" }}>
-              «{sede.observacion_rector}»
-            </p>
-          )}
         </Bloque>
 
         <Bloque
@@ -274,8 +269,8 @@ export default function FichaPlan({
             v={`${sede.lat_final.toFixed(5)}, ${sede.lon_final.toFixed(5)}`}
           />
           <Dato
-            k="predio candidato"
-            v={sede.predio ? `${sede.predio} (dirección catastral)` : "sin cruce en el catastro"}
+            k="predio bajo el punto"
+            v={sede.predio ? `${sede.predio} (dirección catastral)` : "sin predio en el catastro"}
           />
           {sede.veredicto_catastro && (
             <Dato k="cruce con el catastro" v={sede.veredicto_catastro} />
