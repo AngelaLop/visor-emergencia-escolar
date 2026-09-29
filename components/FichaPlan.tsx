@@ -144,6 +144,9 @@ export default function FichaPlan({
                   }`}
             />
           )}
+          {sede.componentes_restringidos && (
+            <Dato k="restringido en la ficha" v={sede.componentes_restringidos.toLowerCase()} />
+          )}
           {sede.semaforo_ffie && (
             <Dato k="Reporte FFIE 2026" v={sede.semaforo_ffie} />
           )}
@@ -161,7 +164,7 @@ export default function FichaPlan({
             </ul>
           )}
           {sede.declaracion_rector && (
-            <Dato k="Reporte rector encuesta FFIE 2021-2022" v={sede.declaracion_rector.toLowerCase()} />
+            <Dato k="Reporte rector a la Secretaría del Valle" v={sede.declaracion_rector.toLowerCase()} />
           )}
           {sede.observacion_rector && (
             <p className="mt-1 text-[11px] leading-snug" style={{ color: "var(--tinta-2)" }}>

@@ -134,6 +134,9 @@ export type SedePlan = {
   operacion_men?: string | null;
   reporto_men?: boolean | null;
   semaforo_ffie?: string | null;
+  /** Componentes de la ficha del tablero del Valle en «Uso restringido» o peor
+   *  aunque el concepto global sea otro, p. ej. «geotécnica: Uso restringido». */
+  componentes_restringidos?: string | null;
 };
 
 /** Un día de una cuadrilla, con sus visitas en orden. */

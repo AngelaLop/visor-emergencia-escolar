@@ -298,6 +298,10 @@ function globoSede(p: Record<string, unknown>): HTMLElement {
   if (p.anillo === "verde") {
     linea("ya tiene concepto de habitable aprobado; confirmar con la secretaría si se repite la evaluación",
           { fontSize: "11px", color: "var(--tinta-2)" });
+    if (p.componentes_restringidos) {
+      linea(`pero en la ficha: ${String(p.componentes_restringidos).toLowerCase()}`,
+            { fontSize: "11px", color: "var(--critico)" });
+    }
   }
   if (p.semaforo_ffie) {
     linea(`Reporte FFIE 2026: ${p.semaforo_ffie}`, { fontSize: "11px",
@@ -1365,6 +1369,7 @@ export default function MapaPlan({
           dificil: Boolean(s.acceso_dificil),
           anillo: s.anillo ?? "",
           semaforo_ffie: s.semaforo_ffie ?? "",
+          componentes_restringidos: s.componentes_restringidos ?? "",
           estado_men: s.estado_men_actual ?? "",
           // MapLibre guarda las propiedades como texto.
           reporto_men: s.reporto_men ? "true" : "false",
