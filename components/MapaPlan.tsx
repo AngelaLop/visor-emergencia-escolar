@@ -46,7 +46,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { COLOR_CONCEPTO, COLOR_CUADRILLA, colorCuadrilla, secretariaDe } from "@/lib/plan";
 import type { ColeccionTramos, Concepto, Escenario, Plan } from "@/lib/plan";
-import { BORDE, colorDe, cumple, danoLeve } from "@/lib/lista";
+import { BORDE, colorDe, cumple } from "@/lib/lista";
 import type { ColorLista, ListaMen, Resalte } from "@/lib/lista";
 
 // Los dos estilos base que usa el visor. Van repetidos aquí y no importados del
@@ -229,7 +229,7 @@ function globoLista(p: Record<string, unknown>): HTMLElement {
   const zona = p.zona ? String(p.zona).toLowerCase() : "zona sin dato";
   linea(`${zona[0].toUpperCase()}${zona.slice(1)} · acceso ${p.acceso}` +
         (p.tipo_acceso && p.tipo_acceso !== "sin medir" ? ` (${p.tipo_acceso})` : ""), gris);
-  linea(p.estado_men ? `Según el MEN: ${p.estado_men}` : "Sin reporte en la capa del MEN", gris);
+  linea(p.estado_men ? `Reporte rector al MEN: ${p.estado_men}` : "No reportó al MEN", gris);
   if (p.ffie_fecha) linea(`Visitada por el FFIE el ${p.ffie_fecha} (${p.ffie_semaforo || "sin semáforo"})`, gris);
   linea(`Coordenada: ${p.detalle_calidad}`, { ...gris, marginTop: "3px" });
   if (p.en_plan === true || p.en_plan === "true") linea("En el plan de campo", { ...gris, fontWeight: "600" });
@@ -278,8 +278,30 @@ function globoSede(p: Record<string, unknown>): HTMLElement {
       fila.append(nota);
     }
   } else {
-    linea("sin concepto técnico", { marginTop: "4px", fontSize: "11px",
-                                    color: "var(--tinta-3)" });
+    // Con anillo blanco falta también el reporte del rector: es lo que dice
+    // la leyenda, y el globo tiene que decir lo mismo.
+    linea(p.anillo === "sin_dato"
+      ? "sin concepto técnico ni reporte del rector"
+      : "sin concepto técnico", { marginTop: "4px", fontSize: "11px",
+                                  color: "var(--tinta-3)" });
+  }
+  // Lo que la sede reportó al MEN después del sismo. Sin esta línea el globo
+  // decía solo «sin concepto técnico» y parecía que no había ningún dato,
+  // aunque la sede hubiera reportado colapso (SE El Abejero, 28-sep-2026).
+  // Con anillo blanco no hay reporte y la línea de arriba ya lo dice.
+  if (p.anillo !== "sin_dato" && p.estado_men && p.reporto_men === "true") {
+    linea(`Reporte rector al MEN: ${String(p.estado_men).toLowerCase()}`,
+          { fontSize: "11px", color: "var(--tinta-2)" });
+  }
+  // El verde marca sedes que quizás no haya que visitar: las visitas son
+  // para sedes con afectaciones, así que se le confirma a la secretaría.
+  if (p.anillo === "verde") {
+    linea("ya tiene concepto de habitable aprobado; confirmar con la secretaría si se repite la evaluación",
+          { fontSize: "11px", color: "var(--tinta-2)" });
+  }
+  if (p.semaforo_ffie) {
+    linea(`Reporte FFIE 2026: ${p.semaforo_ffie}`, { fontSize: "11px",
+                                                    color: "var(--tinta-2)" });
   }
   if (String(p.dificil) === "true") {
     linea("acceso difícil", { fontSize: "11px", color: "var(--critico)" });
@@ -350,8 +372,10 @@ function creaDia(
   const x = c.getContext("2d")!;
   x.scale(R, R);
 
-  // El anillo punteado de afuera dice qué se sabe del daño: verde si el MEN la
-  // tiene sin afectación o con afectación menor, blanco si no se sabe. El blanco lleva un trazo
+  // El anillo punteado de afuera dice qué se sabe del daño: verde si una
+  // inspección la declaró habitable o el rector reportó afectación menor y
+  // funciona; blanco si no hay concepto técnico ni reporte del rector (script
+  // 84, `anillos`). El blanco lleva un trazo
   // oscuro debajo porque sobre el mapa claro un anillo blanco solo no se ve.
   if (anillo) {
     x.setLineDash([3, 2.2]);
@@ -1298,11 +1322,6 @@ export default function MapaPlan({
     }
 
     const desfases = desfasePines(delEscenario);
-    const esRisaralda = plan.escenarios.find((e) => e.escenario === escenario)
-      ?.contrato === "risaralda";
-    const leveDane = new Set(
-      (lista?.sedes ?? []).filter(danoLeve).map((s) => s.dane).filter(Boolean),
-    );
     const sedes = delEscenario.map((s) => {
       // Una escuela se prende cuando ya se visitó. Antes está ahí pero apagada:
       // borrarla diría que no existe, y prenderla diría que ya se hizo.
@@ -1312,10 +1331,10 @@ export default function MapaPlan({
       const meta = !hecha && suya(s.cuadrilla) && deLaSecretaria(s) &&
         objetivos.has(s.dane_propuesto);
       const [ox] = desfases.get(s.dane_propuesto) ?? [0, 0];
-      const leve = (esRisaralda && (
-        leveDane.has(s.dane_propuesto)
-        || danoLeve({ estado_men_actual: s.estado_men_actual })
-      )) || s.anillo === "verde";
+      // El anillo lo decide el script 84 para todas las sedes. Antes Risaralda
+      // lo calculaba aquí con «sin afectación o afectación menor» del MEN, y
+      // así el verde les llegaba a sedes que no habían reportado nada.
+      const leve = s.anillo === "verde";
       // Las marcas de Palmira vienen hechas del script 84. El sufijo arma el
       // nombre del ícono, y el ícono se crea acá porque la combinación de
       // anillo y círculo rojo no está entre los que se crean de antemano.
@@ -1344,6 +1363,11 @@ export default function MapaPlan({
           concepto: s.concepto ?? "",
           dictamen: s.dictamen ?? "",
           dificil: Boolean(s.acceso_dificil),
+          anillo: s.anillo ?? "",
+          semaforo_ffie: s.semaforo_ffie ?? "",
+          estado_men: s.estado_men_actual ?? "",
+          // MapLibre guarda las propiedades como texto.
+          reporto_men: s.reporto_men ? "true" : "false",
         },
       };
     });
@@ -1402,7 +1426,7 @@ export default function MapaPlan({
         })) as never,
     });
   }, [plan, tramos, escenario, diaActual, visitadas, objetivos, reposo, cuadrilla,
-      ocultas, seleccion, oscuro, tema, capasListas, lista]);
+      ocultas, seleccion, oscuro, tema, capasListas]);
 
   // Encuadra las sedes del escenario que se mira, también al filtrar
   // secretaría. Antes el cambio de alcance no movía la cámara y las de Buga o

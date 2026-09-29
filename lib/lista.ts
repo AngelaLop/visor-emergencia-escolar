@@ -104,7 +104,9 @@ export const CLASES: Record<ColorLista, { clave: string; rotulo: string; tono: T
     { clave: "Moderado", rotulo: "Moderado", tono: { claro: "#d9622b", oscuro: "#f09062" } },
     { clave: "Bajo", rotulo: "Bajo", tono: { claro: "#e0b43c", oscuro: "#ecd07a" } },
     { clave: "Sin afectación", rotulo: "Sin afectación", tono: { claro: "#6f9e7e", oscuro: "#94c4a3" } },
-    { clave: "", rotulo: "Nadie contestó", tono: SIN_DATO },
+    // Vacío también cuando la capa dice «sin afectación» pero la sede no
+    // reportó: ese es su valor por defecto (script 90, `cruza`).
+    { clave: "", rotulo: "No reportó al MEN", tono: SIN_DATO },
   ],
 };
 

@@ -120,13 +120,20 @@ export type SedePlan = {
   en_revision?: boolean;
   estado_men_actual?: string | null;
   nivel_men_actual?: string | null;
-  /** Marcas de la lista nueva de Palmira (script 84, `marcas_palmira`):
-   *  `verde` si el MEN la tiene sin afectación o
-   *  afectación menor (la regla de `danoLeve`), `sin_dato` si no se sabe si
-   *  tuvo daño, y `confirmar_coordenada` si es una de las 6 cuya ubicación se
-   *  le pidió a la Secretaría. */
+  /** El anillo del pin, para todas las sedes (script 84, `anillos`, desde el
+   *  28-sep-2026). `verde`: una inspección la declaró habitable, o el rector
+   *  reportó afectación menor y el MEN la tiene funcionando, sin inspección en
+   *  contra. `sin_dato`: no se sabe si tuvo daño y nadie la ha inspeccionado.
+   *  `confirmar_coordenada`: una de las 6 de Palmira cuya ubicación se le
+   *  pidió a la Secretaría. */
   anillo?: "verde" | "sin_dato" | null;
   confirmar_coordenada?: boolean;
+  /** Si funciona después del sismo según la capa del MEN («Habilitado» o
+   *  «Suspendido»), si la sede reportó al MEN, y el semáforo de la evaluación
+   *  del FFIE cuando la hubo («verde», «amarillo», «rojo», o varios). */
+  operacion_men?: string | null;
+  reporto_men?: boolean | null;
+  semaforo_ffie?: string | null;
 };
 
 /** Un día de una cuadrilla, con sus visitas en orden. */

@@ -38,7 +38,7 @@ import { Info, Tarjeta } from "@/components/Piezas";
 import FichaPlan from "@/components/FichaPlan";
 import FormaCalculo from "@/components/FormaCalculo";
 import TarjetaLista from "@/components/TarjetaLista";
-import { cargaLista, danoLeve } from "@/lib/lista";
+import { cargaLista } from "@/lib/lista";
 import type { ColorLista, ListaMen, Resalte } from "@/lib/lista";
 import type { Movil } from "@/components/MapaPlan";
 import {
@@ -1545,13 +1545,9 @@ function TarjetaLeyenda({
   // Las marcas de Palmira (script 84) se cuentan sobre las sedes del escenario
   // que se está viendo: en los que no llevan la lista nueva no aparece nada.
   const delEscenario = plan.sedes.filter((s) => s.escenario === resumen?.escenario);
-  const nVerdePal = delEscenario.filter((s) => s.anillo === "verde").length;
+  const nVerde = delEscenario.filter((s) => s.anillo === "verde").length;
   const nSinDato = delEscenario.filter((s) => s.anillo === "sin_dato").length;
   const nConfirmar = delEscenario.filter((s) => s.confirmar_coordenada).length;
-  const nLeve = esRisaralda && lista
-    ? lista.sedes.filter((s) => danoLeve(s) && s.lat !== null
-      && ["Risaralda", "Pereira", "Dosquebradas"].includes(s.secretaria)).length
-    : 0;
   return (
     <Tarjeta>
       <div className="px-3 py-2">
@@ -1568,7 +1564,7 @@ function TarjetaLeyenda({
             del 1 al {diasCampo}, y su color es la cuadrilla. Dos pines con
             el mismo número y el mismo color son las dos visitas de un día.
           </li>
-          {esRisaralda && (
+          {nVerde > 0 && (
             <li className="flex items-start gap-1.5">
               <span
                 className="mt-0.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full"
@@ -1576,23 +1572,10 @@ function TarjetaLeyenda({
                 aria-hidden
               />
               <span>
-                Anillo verde punteado: el colegio declaró sin afectación o
-                afectación menor en la encuesta del MEN
-                {nLeve > 0 ? ` (${nLeve} en el mapa)` : ""}. Candidatas a
-                salir del análisis; el plan no las quita.
-              </span>
-            </li>
-          )}
-          {nVerdePal > 0 && (
-            <li className="flex items-start gap-1.5">
-              <span
-                className="mt-0.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-                style={{ border: "1.6px dashed #2f8a55" }}
-                aria-hidden
-              />
-              <span>
-                Anillo verde punteado en Palmira: el tablero del MEN la tiene
-                sin afectación o con afectación menor ({nVerdePal} en el mapa).
+                Anillo verde punteado: ya tiene concepto técnico de habitable
+                aprobado por la mesa de revisión ({nVerde} en el mapa). Hay que
+                confirmar con la secretaría si se repite la evaluación. El plan
+                no las quita.
               </span>
             </li>
           )}
@@ -1607,8 +1590,10 @@ function TarjetaLeyenda({
                 aria-hidden
               />
               <span>
-                Anillo blanco punteado: no sabemos si tuvo daño, porque no está
-                en el tablero del MEN ({nSinDato} en el mapa).
+                Anillo blanco punteado: sin concepto técnico ni reporte del
+                rector. Ninguna inspección la ha visitado y el rector no
+                reportó al MEN, o la sede no está en su tablero ({nSinDato} en
+                el mapa).
               </span>
             </li>
           )}

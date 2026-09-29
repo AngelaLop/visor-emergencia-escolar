@@ -129,16 +129,23 @@ export default function FichaPlan({
             </div>
           ) : (
             <p className="text-[11px]" style={{ color: "var(--tinta-2)" }}>
-              Sin concepto técnico en el tablero del Valle.
+              Sin concepto técnico.
             </p>
           )}
           {sede.estado_men_actual && (
             <Dato
-              k="según el MEN"
-              v={`${sede.estado_men_actual.toLowerCase()}${
-                sede.nivel_men_actual ? ` · nivel ${sede.nivel_men_actual.toLowerCase()}` : ""
-              }`}
+              k="Reporte rector al MEN"
+              v={sede.reporto_men === false && sede.estado_men_actual === "Sin afectación"
+                // En la capa del MEN «sin afectación» es lo que queda cuando la
+                // sede no reportó. Mostrarlo tal cual diría que está bien.
+                ? "no reportó daño ni ausencia de daño"
+                : `${sede.estado_men_actual.toLowerCase()}${
+                    sede.nivel_men_actual ? ` · nivel ${sede.nivel_men_actual.toLowerCase()}` : ""
+                  }`}
             />
+          )}
+          {sede.semaforo_ffie && (
+            <Dato k="Reporte FFIE 2026" v={sede.semaforo_ffie} />
           )}
           {sede.fichas && sede.fichas.length > 0 && (
             <ul className="mt-1 flex flex-col gap-0.5 text-[11px]">
@@ -154,7 +161,7 @@ export default function FichaPlan({
             </ul>
           )}
           {sede.declaracion_rector && (
-            <Dato k="lo que declaró el rector" v={sede.declaracion_rector.toLowerCase()} />
+            <Dato k="Reporte rector encuesta FFIE 2021-2022" v={sede.declaracion_rector.toLowerCase()} />
           )}
           {sede.observacion_rector && (
             <p className="mt-1 text-[11px] leading-snug" style={{ color: "var(--tinta-2)" }}>
