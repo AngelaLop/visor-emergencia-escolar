@@ -814,7 +814,12 @@ export const FILTROS_INICIALES: Filtros = {
   // con lo unico que esta afirmado por una fuente: las escuelas de las que
   // alguien dijo que se danaron. La sacudida es un modelo y queda de segunda
   // pregunta, a un clic en "Seleccionar todas".
-  bandas: [],
+  //
+  // Desde el 1-oct-2026 abre con las seis encendidas, a pedido de la usuaria:
+  // la mancha de intensidad se lee completa desde el primer momento. No cambia
+  // qué escuelas con daño se ven, porque `pasa` deja pasar las reportadas
+  // aunque su banda esté apagada y `danosTodasLasBandas` abre encendida.
+  bandas: BANDAS.map((b) => b.banda),
   zonas: [],
   // Vacio es "todas", incluidas las que ya no operan. Una escuela liquidada con
   // el edificio en pie sigue importando despues de un sismo: puede ser

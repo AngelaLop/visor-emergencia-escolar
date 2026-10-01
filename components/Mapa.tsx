@@ -424,7 +424,10 @@ export const CAPAS_INICIALES: Capas = {
   reportes: true,
   huellas: true,
   estadosDano: ["colapso", "dano"],
-  danosTodasLasBandas: false,
+  // Encendida desde el 1-oct-2026, porque el visor abre con todas las bandas:
+  // apagada, las sedes con daño reportado debajo de MMI 4 o fuera de la grilla
+  // (unas 200 con la capa del MEN del 17-sep) quedaban fuera del conteo.
+  danosTodasLasBandas: true,
   subtipos: SUBTIPOS,
   emisores: [...EMISORES],
 };

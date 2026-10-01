@@ -135,7 +135,9 @@ export async function consultaEdicionMen(meta: MetaMen | null): Promise<number |
     const r = await fetch(`${meta.url_servicio}?f=json`, { cache: "no-store" });
     if (!r.ok) return null;
     const d = await r.json();
-    const ultima = d?.editingInfo?.lastEditDate;
+    // La edición de los datos, no la del servicio: el 1-oct-2026 el MEN cambió
+    // el esquema de la capa sin tocar una fila, y `lastEditDate` se movió igual.
+    const ultima = d?.editingInfo?.dataLastEditDate ?? d?.editingInfo?.lastEditDate;
     if (typeof ultima !== "number") return null;
     return ultima > meta.last_edit_date_ms ? ultima : null;
   } catch {
