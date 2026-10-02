@@ -1245,30 +1245,6 @@ function TarjetaResumen({
             />
           </p>
         )}
-        {/* QUIÉN PONE LAS CUADRILLAS, cuando eso cambia el número. Solo lo trae
-            Risaralda. El plan no cambia (se trabaja donde están las sedes), así
-            que no es otro escenario: es la misma cifra con el traslado sumado,
-            y por eso va como una línea más y no como un botón aparte. */}
-        {resumen?.traslado_armenia && (
-          <p className="num mt-0.5 text-[11px]" style={{ color: "var(--tinta-2)" }}>
-            <span className="font-semibold" style={{ color: "var(--tinta)" }}>
-              +{coma(resumen.traslado_armenia.horas)} h
-            </span>{" "}
-            si las cuadrillas vienen de {resumen.traslado_armenia.desde}
-            <Info
-              texto={
-                `El plan no cambia: se trabaja donde están las sedes. Lo que se suma es el viaje de ${resumen.traslado_armenia.desde} a ${resumen.traslado_armenia.hasta} la víspera y el de vuelta al terminar, una vez por cuadrilla.
-
-` +
-                `${hm(resumen.traslado_armenia.min_ida)} de ida y ${hm(resumen.traslado_armenia.min_vuelta)} de vuelta, por las ${resumen.traslado_armenia.cuadrillas} cuadrillas: ${coma(resumen.traslado_armenia.horas)} h. El total pasa de ${coma(resumen.horas_carretera)} h a ${coma(resumen.horas_carretera + resumen.traslado_armenia.horas)} h.
-
-` +
-                `Ese viaje no gasta día hábil: se hace la noche anterior. Los minutos salen del mismo caché de Mapbox con el que se calculó el plan, no del solucionador, así que esta cifra no arrastra su brecha.`
-              }
-              ancho
-            />
-          </p>
-        )}
         <div className="-mx-1 overflow-x-auto">
         <table className="num mt-2 w-full min-w-[300px] text-[11px]">
           <thead>

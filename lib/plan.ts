@@ -208,22 +208,6 @@ export type JornadaCuadrilla = {
   min_jornada_media: number;
 };
 
-/** Lo que cuesta traer las cuadrillas de otra ciudad.
- *
- *  Solo lo trae Risaralda. El plan es el mismo (se trabaja donde están las
- *  sedes); lo que se suma es el viaje de la víspera y el del regreso, una vez
- *  por cuadrilla. No lo calculó el solucionador: son dos tramos del caché de
- *  Mapbox, así que el número no arrastra la brecha de convergencia del plan. */
-export type TrasladoContrato = {
-  desde: string;
-  hasta: string;
-  min_ida: number;
-  min_vuelta: number;
-  cuadrillas: number;
-  /** (ida + vuelta) × cuadrillas, en horas. */
-  horas: number;
-};
-
 export type ResumenEscenario = {
   escenario: Escenario;
   /** El nombre corto que va en el botón. */
@@ -251,8 +235,6 @@ export type ResumenEscenario = {
    *  se deduce acá: el alcance elegido del Valle no es el más grande que cabe
    *  en el TdR. Hay uno por contrato, no uno solo. */
   por_defecto?: boolean;
-  /** Solo en Risaralda. `null` donde las cuadrillas ya viven en su base. */
-  traslado_armenia?: TrasladoContrato | null;
   /** Con el regreso final a la base, que no ocupa un día hábil pero se maneja.
    *  Es lo comparable con `cota_horas`. `horas_dias` es lo que suma el
    *  contador de la simulación, que recorre los días y no el regreso. */
